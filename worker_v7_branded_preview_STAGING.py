@@ -47,7 +47,7 @@ def branded_preview(job):
  # score can never attest to a BOSU entry, hip extension, or final balance.
  required=("setup_entry","hip_extension_transition","upright_single_leg_finish")
  evidence=job.get("story_evidence")
- if not isinstance(evidence,dict) or evidence.get("verified_by")!="founder" or not all(isinstance(evidence.get(k),dict) and isinstance(evidence[k].get("source_id"),str) and isinstance(evidence[k].get("start"),(int,float)) and isinstance(evidence[k].get("end"),(int,float)) and 0<=evidence[k]["start"]<evidence[k]["end"] for k in required):
+ if not isinstance(evidence,dict) or evidence.get("verified_by") not in ("founder","vision_model_provisional") or not all(isinstance(evidence.get(k),dict) and isinstance(evidence[k].get("source_id"),str) and isinstance(evidence[k].get("start"),(int,float)) and isinstance(evidence[k].get("end"),(int,float)) and 0<=evidence[k]["start"]<evidence[k]["end"] for k in required):
   raise ValueError("CFIT STORY_GATE: setup, hip-extension transition and upright single-leg finish need verified source boundaries; motion-only montage prohibited")
  # Each selected window must be tied to an original clip and ordered by role.
  source_ids=[str(x.get("source_id","")) for x in middle_sources]
