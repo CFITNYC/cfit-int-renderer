@@ -24,5 +24,9 @@ jobs:
                   pass
           print('Platform budgets: PASS')
           PY
+      - name: Run platform and duration safety tests
+        run: python3 tests/test_renderer_contract.py
+      - name: Build integrated staging Dockerfile
+        run: docker build -t cfit-renderer-integrated-staging -f Dockerfile.integrated-STAGING .
       - name: Build existing production Dockerfile
         run: docker build -t cfit-renderer-baseline -f Dockerfile .
