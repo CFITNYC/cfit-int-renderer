@@ -3,7 +3,7 @@ Do not deploy as production until exercise-cycle quality is visually accepted.
 """
 import os, json, hmac
 from http.server import ThreadingHTTPServer
-from worker_v6_repetition_detection_STAGING import Handler as BaseHandler, render as render_existing
+from worker import Handler as BaseHandler, render as render_existing
 from worker_v7_branded_preview_STAGING import branded_preview
 
 class Handler(BaseHandler):
