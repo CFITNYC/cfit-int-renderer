@@ -88,7 +88,7 @@ def branded_preview(job):
    subprocess.run(["ffmpeg","-nostdin","-hide_banner","-v","error","-y","-ss",str(window["start"]),"-t",str(window["end"]-window["start"]),"-i",str(src),"-an","-c:v","libx264","-preset","veryfast","-crf","21","-pix_fmt","yuv420p",str(out)],check=True,timeout=100)
    assembled.append(out)
   story_list=t/"story.txt"
-  story_list.write_text("".join("file '"+str(f)+"'\\n" for f in assembled))
+  story_list.write_text("".join("file '"+str(f)+"'\n" for f in assembled))
   mid=t/"middle-source.mp4"
   subprocess.run(["ffmpeg","-nostdin","-hide_banner","-v","error","-y","-f","concat","-safe","0","-i",str(story_list),"-c","copy",str(mid)],check=True,timeout=60)
   check_platform_duration(duration_seconds(first),duration_seconds(mid),duration_seconds(last),job.get("editing_contract"))
