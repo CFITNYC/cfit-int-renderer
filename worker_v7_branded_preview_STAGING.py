@@ -42,6 +42,17 @@ def branded_preview(job):
  middle_sources=job.get("middle_sources")
  if not isinstance(middle_sources,list) or not middle_sources:raise ValueError("Original exercise sources required")
  if not all(source.get("auto_select_complete_cycle") is True and source.get("auto_select_motion") is not True for source in middle_sources):raise ValueError("Complete-cycle selection required for every exercise")
+ # CFIT V17 story regression gate: do not use optical-cycle cuts in story mode.
+ # Story evidence must identify original-source movement boundaries; a motion
+ # score can never attest to a BOSU entry, hip extension, or final balance.
+ required=("setup_entry","hip_extension_transition","upright_single_leg_finish")
+ evidence=job.get("story_evidence")
+ if not isinstance(evidence,dict) or evidence.get("verified_by")!="founder" or not all(isinstance(evidence.get(k),dict) and isinstance(evidence[k].get("source_id"),str) and isinstance(evidence[k].get("start"),(int,float)) and isinstance(evidence[k].get("end"),(int,float)) and 0<=evidence[k]["start"]<evidence[k]["end"] for k in required):
+  raise ValueError("CFIT STORY_GATE: setup, hip-extension transition and upright single-leg finish need verified source boundaries; motion-only montage prohibited")
+ # The original montage renderer cannot yet place or preserve verified story
+ # windows. Refuse rendering rather than silently discarding the evidence.
+ raise ValueError("CFIT STORY_GATE: story-aware sequence assembler pending; no incomplete montage will be delivered")
+
  with tempfile.TemporaryDirectory() as td:
   t=pathlib.Path(td);parts=[]
   first=t/"opening-source.mp4";last=t/"closing-source.mp4"
