@@ -1,10 +1,11 @@
 """CFIT INT private integrated renderer staging entrypoint.
 Do not deploy as production until exercise-cycle quality is visually accepted.
 """
-import os, json, hmac
+import os, json, hmac, pathlib, tempfile
 from http.server import ThreadingHTTPServer
 from worker import Handler as BaseHandler, render as render_existing
-from worker_v7_branded_preview_STAGING import branded_preview
+from worker_v7_branded_preview_STAGING import branded_preview, download_signed
+from story_visual_sampler import frame_samples
 
 class Handler(BaseHandler):
     def do_POST(self):
@@ -21,6 +22,20 @@ class Handler(BaseHandler):
             mode = job.get("mode")
             if job.get("publishing_enabled") is not False:
                 raise ValueError("Publishing must be disabled")
+            if mode == "inspect_original_frames_private":
+                sources=job.get("sources")
+                if not isinstance(sources,list) or not 1<=len(sources)<=3:
+                    raise ValueError("1-3 original sources required")
+                with tempfile.TemporaryDirectory() as td:
+                    result=[]
+                    for i,source in enumerate(sources):
+                        if not isinstance(source,dict) or not source.get("source_id") or source.get("original_source") is not True:
+                            raise ValueError("Original source and ID required")
+                        path=pathlib.Path(td)/("inspection-"+str(i)+".mp4")
+                        download_signed(source.get("signed_url",""),path)
+                        sample=frame_samples(path,interval=3,max_seconds=54,max_frames=18)
+                        result.append({"source_id":source["source_id"],**sample})
+                return self.answer(200,{"status":"ORIGINAL_FRAMES_UNVERIFIED","publishing_enabled":False,"sources":result})
             if mode == "cfit_branded_preview_staging":
                 video = branded_preview(job)
             elif mode == "source_to_preview" and not job.get("editing_contract"):
