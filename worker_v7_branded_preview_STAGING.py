@@ -30,8 +30,9 @@ def check_platform_duration(opening,middle,closing,contract):
   raise ValueError("Founder platform editing contract required")
  maximum=float(contract.get("maximum_seconds",0))
  total=sum((opening,middle,closing))
- if maximum<=0 or total>maximum:
-  raise ValueError("Complete exercises plus approved branding exceed platform duration; reduce exercises or request longer post")
+ minimum=float(contract.get("minimum_seconds",0))
+ if maximum<=0 or minimum<=0 or minimum>maximum or total<minimum or total>maximum:
+  raise ValueError("Story plus approved branding outside CFIT platform duration; revise shot selection without cutting required movement phases")
  return round(total,2)
 
 def branded_preview(job):
