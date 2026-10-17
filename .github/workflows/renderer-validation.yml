@@ -26,6 +26,8 @@ jobs:
           PY
       - name: Run platform and duration safety tests
         run: PYTHONPATH=. python3 tests/test_renderer_contract.py
+      - name: Require story evidence and reject motion-only fallback
+        run: PYTHONPATH=. python3 tests/test_story_gate.py
       - name: Build integrated staging Dockerfile
         run: docker build -t cfit-renderer-integrated-staging -f Dockerfile.integrated-STAGING .
       - name: Build existing production Dockerfile
