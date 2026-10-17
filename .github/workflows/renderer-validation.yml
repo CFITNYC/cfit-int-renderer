@@ -1,0 +1,28 @@
+name: Renderer validation
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Python syntax
+        run: python3 -m py_compile worker.py rep_cycles_staging.py worker_v6_repetition_detection_STAGING.py worker_v7_branded_preview_STAGING.py worker_integrated_STAGING.py
+      - name: Check private platform duration gate
+        run: |
+          python3 - <<'PY'
+          from worker_v7_branded_preview_STAGING import check_platform_duration
+          for platform in ('youtube_shorts', 'tiktok'):
+              contract={'platform':platform,'maximum_seconds':30,'minimum_complete_repetitions_per_exercise':1}
+              assert check_platform_duration(2,20,2,contract)==24
+              try:
+                  check_platform_duration(3,30,3,contract)
+                  raise AssertionError("Overlong video accepted")
+              except ValueError:
+                  pass
+          print('Platform budgets: PASS')
+          PY
+      - name: Build existing production Dockerfile
+        run: docker build -t cfit-renderer-baseline -f Dockerfile .
