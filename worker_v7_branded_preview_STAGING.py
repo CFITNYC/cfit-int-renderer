@@ -49,18 +49,48 @@ def branded_preview(job):
  evidence=job.get("story_evidence")
  if not isinstance(evidence,dict) or evidence.get("verified_by")!="founder" or not all(isinstance(evidence.get(k),dict) and isinstance(evidence[k].get("source_id"),str) and isinstance(evidence[k].get("start"),(int,float)) and isinstance(evidence[k].get("end"),(int,float)) and 0<=evidence[k]["start"]<evidence[k]["end"] for k in required):
   raise ValueError("CFIT STORY_GATE: setup, hip-extension transition and upright single-leg finish need verified source boundaries; motion-only montage prohibited")
- # The original montage renderer cannot yet place or preserve verified story
- # windows. Refuse rendering rather than silently discarding the evidence.
- raise ValueError("CFIT STORY_GATE: story-aware sequence assembler pending; no incomplete montage will be delivered")
+ # Each selected window must be tied to an original clip and ordered by role.
+ source_ids=[str(x.get("source_id","")) for x in middle_sources]
+ windows=[evidence[k] for k in required]
+ if len(set(source_ids))!=len(source_ids) or not all(x["source_id"] in source_ids for x in windows):
+  raise ValueError("CFIT STORY_GATE: evidence must reference provided original video sources")
+ if any(x["end"]-x["start"]<0.75 or x["end"]-x["start"]>16 for x in windows):
+  raise ValueError("CFIT STORY_GATE: invalid movement window duration")
+ if sum(x["end"]-x["start"] for x in windows)<5:
+  raise ValueError("CFIT STORY_GATE: story phases too short")
+ # At least one full repetition must have its own verified window for each exercise.
+ reps=evidence.get("complete_repetitions")
+ if not isinstance(reps,list) or len(reps)!=len(source_ids) or {x.get("source_id") for x in reps if isinstance(x,dict)}!=set(source_ids):
+  raise ValueError("CFIT STORY_GATE: a verified complete repetition is required for every exercise")
+ if not all(isinstance(x,dict) and isinstance(x.get("start"),(int,float)) and isinstance(x.get("end"),(int,float)) and 0<=x["start"]<x["end"] and x["end"]-x["start"]>=1 for x in reps):
+  raise ValueError("CFIT STORY_GATE: incomplete repetition timings")
+ clips=([("setup_entry",windows[0])]+[("complete_rep",rep) for rep in reps[:2]]+
+        [("hip_extension_transition",windows[1])]+[("complete_rep",rep) for rep in reps[2:]]+
+        [("upright_single_leg_finish",windows[2])])
 
  with tempfile.TemporaryDirectory() as td:
   t=pathlib.Path(td);parts=[]
   first=t/"opening-source.mp4";last=t/"closing-source.mp4"
   download_signed(assets.get("opening_signed_url",""),first)
   download_signed(assets.get("closing_signed_url",""),last)
-  middle_job={"mode":"source_to_preview","publishing_enabled":False,"title":job.get("title","CFIT METHOD"),"sources":middle_sources}
-  # Current render worker still uses motion scoring, NOT phase/rep understanding.
-  mid=t/"middle-source.mp4";mid.write_bytes(render_middle(middle_job))
+  downloaded={}
+  for i,source in enumerate(middle_sources):
+   dest=t/("exercise-"+str(i)+".mp4")
+   download_signed(source["signed_url"],dest)
+   downloaded[str(source["source_id"])]=dest
+  assembled=[]
+  for i,(role,window) in enumerate(clips):
+   src=downloaded[window["source_id"]]
+   duration=duration_seconds(src)
+   if float(window["end"])>duration:
+    raise ValueError("CFIT STORY_GATE: marked movement extends beyond original video")
+   out=t/("story-"+str(i)+".mp4")
+   subprocess.run(["ffmpeg","-nostdin","-hide_banner","-v","error","-y","-ss",str(window["start"]),"-t",str(window["end"]-window["start"]),"-i",str(src),"-an","-c:v","libx264","-preset","veryfast","-crf","21","-pix_fmt","yuv420p",str(out)],check=True,timeout=100)
+   assembled.append(out)
+  story_list=t/"story.txt"
+  story_list.write_text("".join("file '"+str(f)+"'\\n" for f in assembled))
+  mid=t/"middle-source.mp4"
+  subprocess.run(["ffmpeg","-nostdin","-hide_banner","-v","error","-y","-f","concat","-safe","0","-i",str(story_list),"-c","copy",str(mid)],check=True,timeout=60)
   check_platform_duration(duration_seconds(first),duration_seconds(mid),duration_seconds(last),job.get("editing_contract"))
   for i,src in enumerate((first,mid,last)):
    out=t/f"normalized-{i}.mp4";normalize(src,out);parts.append(out)
