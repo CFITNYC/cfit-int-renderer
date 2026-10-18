@@ -1,7 +1,7 @@
 """CFIT INT private integrated renderer staging entrypoint.
 Do not deploy as production until exercise-cycle quality is visually accepted.
 """
-import os, json, hmac, pathlib, tempfile
+import os, json, hmac, pathlib, tempfile, traceback
 from http.server import ThreadingHTTPServer
 from worker import Handler as BaseHandler, render as render_existing
 from worker_v7_branded_preview_STAGING import branded_preview, download_signed
@@ -54,6 +54,7 @@ class Handler(BaseHandler):
         except (ValueError, json.JSONDecodeError) as exc:
             self.answer(422, {"error": str(exc)})
         except Exception:
+            traceback.print_exc()
             self.answer(500, {"error": "Private video rendering failed"})
 
 if __name__ == "__main__":
