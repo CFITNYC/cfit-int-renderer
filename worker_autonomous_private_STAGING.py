@@ -8,7 +8,7 @@ def render_autonomous(job):
  sources=job.get("middle_sources")
  brand=job.get("branding") or {}
  shots=job.get("editorial_shots")
- if not isinstance(sources,list) or not 1<=len(sources)<=3 or not isinstance(shots,list) or not 3<=len(shots)<=12:
+ if not isinstance(sources,list) or not 1<=len(sources)<=6 or not isinstance(shots,list) or not len(sources)<=len(shots)<=18:
   raise ValueError("Original sources and director shots required")
  if brand.get("opening_role")!="opening" or brand.get("closing_role")!="closing":
   raise ValueError("Approved branding required")
@@ -32,7 +32,7 @@ def render_autonomous(job):
    downloaded[src["source_id"]]=dst
   # Optional AI-authored editorial captions. These are overlays, not claimed speech transcripts.
   captions=job.get("editorial_captions") or []
-  if not isinstance(captions,list) or len(captions)>12:
+  if not isinstance(captions,list) or len(captions)>18:
    raise ValueError("Invalid editorial captions")
   label_by_shot={}
   for caption in captions:
