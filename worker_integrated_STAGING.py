@@ -43,10 +43,10 @@ def private_audio_mix(job):
             def ass_time(n):
                 c=round(n*100)
                 return f"{c//360000}:{(c//6000)%60:02}:{(c//100)%60:02}.{c%100:02}"
-            lines=["[Script Info]","ScriptType: v4.00+","PlayResX: 720","PlayResY: 1280","[V4+ Styles]","Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding","Style: Nick,DejaVu Sans,60,&H00FFFFFF,&H00FFFFFF,&H00101010,&H90000000,-1,0,0,0,100,100,0,0,1,3,1,2,82,82,320,1","[Events]","Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
+            lines=["[Script Info]","ScriptType: v4.00+","PlayResX: 720","PlayResY: 1280","[V4+ Styles]","Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding","Style: Nick,DejaVu Sans,68,&H00FFFFFF,&H00FFFFFF,&H00101010,&H90000000,-1,0,0,0,100,100,0,0,1,4,2,2,84,84,325,1","[Events]","Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
             for i in range(0,len(entries),2):
                 group=entries[i:i+2]
-                phrase=" ".join(("{\\c&H0037AFD4&}"+x[2]+"{\\c&H00FFFFFF&}") if x[3] else x[2] for x in group)
+                phrase=" ".join(("{\\c&H0037AFD4&}"+x[2].upper()+"{\\c&H00FFFFFF&}") if x[3] else x[2].upper() for x in group)
                 lines.append(f"Dialogue: 0,{ass_time(group[0][0])},{ass_time(group[-1][1])},Nick,,0,0,0,,{phrase}")
             ass=root/"narration.ass"
             ass.write_text("\n".join(lines)+"\n",encoding="utf-8")
