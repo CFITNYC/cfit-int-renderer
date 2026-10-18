@@ -25,7 +25,34 @@ def private_audio_mix(job):
             out.write(inp.read(10000001))
         if audio.stat().st_size>10000000 or duration_seconds(audio)>duration_seconds(video):
             raise ValueError("Narration cannot exceed locked video duration")
-        subprocess.run(["ffmpeg","-nostdin","-v","error","-y","-i",str(video),"-i",str(audio),"-map","0:v:0","-map","1:a:0","-c:v","copy","-c:a","aac","-b:a","128k","-t",str(duration_seconds(video)),"-movflags","+faststart",str(result)],check=True,timeout=80)
+        words=job.get("timed_words") or []
+        video_filters=[]
+        if words:
+            if job.get("alignment_source")!="elevenlabs" or not isinstance(words,list) or len(words)>140:
+                raise ValueError("Actual ElevenLabs word timing required")
+            import math
+            entries=[]
+            for item in words:
+                start=item.get("start");end=item.get("end");value=item.get("text")
+                if not isinstance(value,str) or not isinstance(start,(int,float)) or not isinstance(end,(int,float)) or not (math.isfinite(start) and math.isfinite(end)) or not 0<=start<end<=duration_seconds(video):
+                    raise ValueError("Invalid timed narration word")
+                clean=value.replace("{","").replace("}","").replace("\\","").replace("\n"," ").strip()
+                if not clean or len(clean)>48: raise ValueError("Invalid caption text")
+                entries.append((float(start),float(end),clean,item.get("gold") is True))
+            entries.sort(key=lambda x:x[0])
+            def ass_time(n):
+                c=round(n*100)
+                return f"{c//360000}:{(c//6000)%60:02}:{(c//100)%60:02}.{c%100:02}"
+            lines=["[Script Info]","ScriptType: v4.00+","PlayResX: 720","PlayResY: 1280","[V4+ Styles]","Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding","Style: Nick,DejaVu Sans,40,&H00FFFFFF,&H00FFFFFF,&H00101010,&H90000000,-1,0,0,0,100,100,0,0,1,3,1,2,82,82,320,1","[Events]","Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
+            for i in range(0,len(entries),3):
+                group=entries[i:i+3]
+                phrase=" ".join(("{\\c&H0037AFD4&}"+x[2]+"{\\c&H00FFFFFF&}") if x[3] else x[2] for x in group)
+                lines.append(f"Dialogue: 0,{ass_time(group[0][0])},{ass_time(group[-1][1])},Nick,,0,0,0,,{phrase}")
+            ass=root/"narration.ass"
+            ass.write_text("\n".join(lines)+"\n",encoding="utf-8")
+            video_filters=["-vf","subtitles="+str(ass)]
+        codec=["-c:v","libx264","-preset","veryfast","-crf","21"] if words else ["-c:v","copy"]
+        subprocess.run(["ffmpeg","-nostdin","-v","error","-y","-i",str(video),"-i",str(audio),"-map","0:v:0","-map","1:a:0",*video_filters,*codec,"-c:a","aac","-b:a","128k","-t",str(duration_seconds(video)),"-movflags","+faststart",str(result)],check=True,timeout=120)
         return result.read_bytes()
 
 class Handler(BaseHandler):
