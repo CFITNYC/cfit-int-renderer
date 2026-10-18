@@ -1,5 +1,5 @@
 """Private autonomous-edit renderer. Executes source-backed AI editorial shot list, no fixed exercise choreography."""
-import pathlib, tempfile, subprocess, json
+import pathlib, tempfile, subprocess, json, math
 from worker_v7_branded_preview_STAGING import download_signed, duration_seconds, normalize
 
 def render_autonomous(job):
@@ -45,7 +45,8 @@ def render_autonomous(job):
   contract=job.get("editing_contract") or {}
   max_seconds=float(contract.get("maximum_seconds",0))
   total=duration_seconds(first)+duration_seconds(middle)+duration_seconds(last)
-  if not 0<max_seconds<=90 or total>max_seconds:
+  min_seconds=float(contract.get('minimum_seconds',0))
+  if not 0<min_seconds<=max_seconds<=90 or total>max_seconds:
    raise ValueError(f"Director edit exceeds platform budget: {total:.2f}s > {max_seconds:.2f}s. AI must revise source cuts.")
   normalized=[]
   for i,part in enumerate((first,middle,last)):
@@ -54,4 +55,14 @@ def render_autonomous(job):
   manifest.write_text("".join("file '"+str(v)+"'\n" for v in normalized))
   final=t/"autonomous-preview.mp4"
   subprocess.run(["ffmpeg","-nostdin","-v","error","-y","-f","concat","-safe","0","-i",str(manifest),"-c","copy","-movflags","+faststart",str(final)],check=True,timeout=90)
+  inspection=subprocess.run(['ffprobe','-v','error','-show_entries','format=duration:stream=codec_type,width,height','-of','json',str(final)],capture_output=True,text=True,check=True,timeout=20)
+  probed=json.loads(inspection.stdout)
+  finished=float(probed.get('format',{}).get('duration',0))
+  video_streams=[v for v in probed.get('streams',[]) if v.get('codec_type')=='video']
+  if not math.isfinite(finished) or finished<min_seconds or finished>max_seconds:
+   raise ValueError('Finished preview duration fails platform requirements')
+  if len(video_streams)!=1 or video_streams[0].get('width')!=720 or video_streams[0].get('height')!=1280:
+   raise ValueError('Finished preview fails vertical-video requirements')
+  if not final.is_file() or final.stat().st_size<10240:
+   raise ValueError('Finished preview file incomplete')
   return final.read_bytes()
