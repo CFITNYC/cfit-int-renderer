@@ -32,13 +32,28 @@ def private_audio_mix(job):
                 raise ValueError("Actual ElevenLabs word timing required")
             import math
             entries=[]
+            video_duration=duration_seconds(video)
             for item in words:
                 start=item.get("start");end=item.get("end");value=item.get("text")
-                if not isinstance(value,str) or not isinstance(start,(int,float)) or not isinstance(end,(int,float)) or not (math.isfinite(start) and math.isfinite(end)) or not 0<=start<end<=duration_seconds(video):
-                    raise ValueError("Invalid timed narration word")
+                if not isinstance(value,str) or not isinstance(start,(int,float)) or not isinstance(end,(int,float)) or not (math.isfinite(start) and math.isfinite(end)):
+                    raise ValueError("Caption alignment contains invalid word data")
+                # ElevenLabs can return zero-length timestamps for punctuation or pauses.
+                # They are not visible words and must not invalidate a valid voice mix.
+                if end <= start:
+                    continue
+                if start < 0 or end > video_duration + 0.20:
+                    raise ValueError(f"Caption alignment exceeds video: word ends at {end:.2f}s; video is {video_duration:.2f}s")
+                start=max(0.0,float(start))
+                end=min(float(end),video_duration)
+                if end <= start:
+                    continue
                 clean=value.replace("{","").replace("}","").replace("\\","").replace("\n"," ").strip()
-                if not clean or len(clean)>48: raise ValueError("Invalid caption text")
-                entries.append((float(start),float(end),clean,item.get("gold") is True))
+                if not clean:
+                    continue
+                if len(clean)>48: raise ValueError("Invalid caption text")
+                entries.append((start,end,clean,item.get("gold") is True))
+            if not entries:
+                raise ValueError("Narration has no valid timed caption words")
             entries.sort(key=lambda x:x[0])
             def ass_time(n):
                 c=round(n*100)
