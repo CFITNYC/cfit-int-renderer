@@ -50,17 +50,23 @@ def render_autonomous(job):
    if shot["end"]>duration_seconds(src):
     raise ValueError("Editorial shot exceeds source footage")
    dest=t/f"shot-{i}.mp4"
-   filters=["-vf","scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1"]
+   filters=["-vf","scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,setpts=PTS-STARTPTS"]
    if i in label_by_shot:
     caption_file=t/f"caption-{i}.txt"
     caption_file.write_text(label_by_shot[i],encoding="utf-8")
-    filters=["-vf","scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1,drawtext=textfile="+str(caption_file)+":fontsize=38:fontcolor=white:borderw=3:bordercolor=black:x=(w-text_w)/2:y=h*0.79"]
+    filters=["-vf","scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,setpts=PTS-STARTPTS,drawtext=textfile="+str(caption_file)+":fontsize=38:fontcolor=white:borderw=3:bordercolor=black:x=(w-text_w)/2:y=h*0.79"]
    subprocess.run(["ffmpeg","-nostdin","-hide_banner","-v","error","-filter_threads","1","-y","-ss",str(shot["start"]),"-t",str(shot["end"]-shot["start"]),"-i",str(src),*filters,"-an","-c:v","libx264","-threads","1","-preset","veryfast","-crf","21","-pix_fmt","yuv420p",str(dest)],check=True,timeout=100)
    segments.append(dest)
   midlist=t/"midlist.txt"
   midlist.write_text("".join("file '"+str(v)+"'\n" for v in segments))
   middle=t/"middle.mp4"
   subprocess.run(["ffmpeg","-nostdin","-v","error","-y","-f","concat","-safe","0","-i",str(midlist),"-c","copy",str(middle)],check=True,timeout=90)
+  # Reject long static intervals in exercise-only footage; successful encoding is not proof of motion.
+  freeze=subprocess.run(["ffmpeg","-nostdin","-hide_banner","-i",str(middle),"-vf","freezedetect=n=-50dB:d=2.5","-an","-f","null","-"],capture_output=True,text=True,timeout=90)
+  if freeze.returncode!=0:
+   raise ValueError("Exercise motion validation unavailable; private preview rejected")
+  if "freeze_start:" in freeze.stderr:
+   raise ValueError("Exercise footage contains a prolonged frozen segment; director must revise original source cuts")
   contract=job.get("editing_contract") or {}
   max_seconds=float(contract.get("maximum_seconds",0))
   total=duration_seconds(first)+duration_seconds(middle)+duration_seconds(last)
