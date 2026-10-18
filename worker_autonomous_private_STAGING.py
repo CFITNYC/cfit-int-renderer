@@ -30,13 +30,32 @@ def render_autonomous(job):
    dst=t/f"source-{i}.mp4"
    download_signed(src.get("signed_url",""),dst)
    downloaded[src["source_id"]]=dst
+  # Optional AI-authored editorial captions. These are overlays, not claimed speech transcripts.
+  captions=job.get("editorial_captions") or []
+  if not isinstance(captions,list) or len(captions)>12:
+   raise ValueError("Invalid editorial captions")
+  label_by_shot={}
+  for caption in captions:
+   if not isinstance(caption,dict) or type(caption.get("shot_index")) is not int or not 0<=caption["shot_index"]<len(shots):
+    raise ValueError("Caption references invalid shot")
+   line=caption.get("text")
+   if not isinstance(line,str) or not 1<=len(line.strip())<=64 or any(ord(c)<32 for c in line):
+    raise ValueError("Invalid editorial caption text")
+   if caption["shot_index"] in label_by_shot:
+    raise ValueError("Duplicate editorial caption")
+   label_by_shot[caption["shot_index"]]=line.strip()
   segments=[]
   for i,shot in enumerate(shots):
    src=downloaded[shot["source_id"]]
    if shot["end"]>duration_seconds(src):
     raise ValueError("Editorial shot exceeds source footage")
    dest=t/f"shot-{i}.mp4"
-   subprocess.run(["ffmpeg","-nostdin","-hide_banner","-v","error","-y","-ss",str(shot["start"]),"-t",str(shot["end"]-shot["start"]),"-i",str(src),"-an","-c:v","libx264","-preset","veryfast","-crf","21","-pix_fmt","yuv420p",str(dest)],check=True,timeout=100)
+   filters=[]
+   if i in label_by_shot:
+    caption_file=t/f"caption-{i}.txt"
+    caption_file.write_text(label_by_shot[i],encoding="utf-8")
+    filters=["-vf","drawtext=textfile="+str(caption_file)+":fontsize=38:fontcolor=white:borderw=3:bordercolor=black:x=(w-text_w)/2:y=h*0.79"]
+   subprocess.run(["ffmpeg","-nostdin","-hide_banner","-v","error","-y","-ss",str(shot["start"]),"-t",str(shot["end"]-shot["start"]),"-i",str(src),*filters,"-an","-c:v","libx264","-preset","veryfast","-crf","21","-pix_fmt","yuv420p",str(dest)],check=True,timeout=100)
    segments.append(dest)
   midlist=t/"midlist.txt"
   midlist.write_text("".join("file '"+str(v)+"'\n" for v in segments))
