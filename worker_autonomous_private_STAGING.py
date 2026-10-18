@@ -55,7 +55,7 @@ def render_autonomous(job):
     caption_file=t/f"caption-{i}.txt"
     caption_file.write_text(label_by_shot[i],encoding="utf-8")
     filters=["-vf","drawtext=textfile="+str(caption_file)+":fontsize=38:fontcolor=white:borderw=3:bordercolor=black:x=(w-text_w)/2:y=h*0.79"]
-   subprocess.run(["ffmpeg","-nostdin","-hide_banner","-v","error","-y","-ss",str(shot["start"]),"-t",str(shot["end"]-shot["start"]),"-i",str(src),*filters,"-an","-c:v","libx264","-preset","veryfast","-crf","21","-pix_fmt","yuv420p",str(dest)],check=True,timeout=100)
+   subprocess.run(["ffmpeg","-nostdin","-hide_banner","-v","error","-filter_threads","1","-y","-ss",str(shot["start"]),"-t",str(shot["end"]-shot["start"]),"-i",str(src),*filters,"-an","-c:v","libx264","-threads","1","-preset","veryfast","-crf","21","-pix_fmt","yuv420p",str(dest)],check=True,timeout=100)
    segments.append(dest)
   midlist=t/"midlist.txt"
   midlist.write_text("".join("file '"+str(v)+"'\n" for v in segments))
