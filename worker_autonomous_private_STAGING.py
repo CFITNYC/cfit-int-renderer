@@ -31,7 +31,7 @@ def render_autonomous(job):
    download_signed(src.get("signed_url",""),dst)
    downloaded[src["source_id"]]=dst
   # Optional AI-authored editorial captions. These are overlays, not claimed speech transcripts.
-  captions=job.get("editorial_captions") or []
+  captions=[]  # Keep master picture clean: speech captions are added only during final narration mixing.
   if not isinstance(captions,list) or len(captions)>18:
    raise ValueError("Invalid editorial captions")
   label_by_shot={}
