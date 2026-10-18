@@ -1,12 +1,32 @@
 """CFIT INT private integrated renderer staging entrypoint.
 Do not deploy as production until exercise-cycle quality is visually accepted.
 """
-import os, json, hmac, pathlib, tempfile, traceback
+import os, json, hmac, pathlib, tempfile, traceback, subprocess
 from http.server import ThreadingHTTPServer
 from worker import Handler as BaseHandler, render as render_existing
 from worker_v7_branded_preview_STAGING import branded_preview, download_signed
 from story_visual_sampler import frame_samples
 from worker_autonomous_private_STAGING import render_autonomous
+
+def private_audio_mix(job):
+    """Finish a previously rendered private video; preserve existing images and branding."""
+    if job.get("founder_review_required") is not True or job.get("publishing_enabled") is not False:
+        raise ValueError("Founder review and disabled publishing required")
+    from worker_v7_branded_preview_STAGING import duration_seconds
+    with tempfile.TemporaryDirectory() as tmp:
+        root=pathlib.Path(tmp)
+        video=root/"picture.mp4"; audio=root/"nick.mp3"; result=root/"narrated.mp4"
+        download_signed(job.get("video_signed_url",""),video)
+        import urllib.parse,urllib.request
+        u=urllib.parse.urlsplit(job.get("voice_signed_url",""))
+        if u.scheme!="https" or u.hostname!=os.environ.get("CFIT_STORAGE_HOST","hszormivkbqvpfgfhktm.supabase.co") or not u.path.startswith("/storage/v1/object/sign/cfit-int-private-audio/") or not u.path.endswith(".mp3"):
+            raise ValueError("Signed Nick audio required")
+        with urllib.request.urlopen(job["voice_signed_url"],timeout=35) as inp,open(audio,"wb") as out:
+            out.write(inp.read(10000001))
+        if audio.stat().st_size>10000000 or duration_seconds(audio)>duration_seconds(video):
+            raise ValueError("Narration cannot exceed locked video duration")
+        subprocess.run(["ffmpeg","-nostdin","-v","error","-y","-i",str(video),"-i",str(audio),"-map","0:v:0","-map","1:a:0","-c:v","copy","-c:a","aac","-b:a","128k","-t",str(duration_seconds(video)),"-movflags","+faststart",str(result)],check=True,timeout=80)
+        return result.read_bytes()
 
 class Handler(BaseHandler):
     def do_POST(self):
@@ -23,7 +43,9 @@ class Handler(BaseHandler):
             mode = job.get("mode")
             if job.get("publishing_enabled") is not False:
                 raise ValueError("Publishing must be disabled")
-            if mode == "inspect_original_frames_private":
+            if mode == "private_nick_voice_mix":
+                video=private_audio_mix(job)
+            elif mode == "inspect_original_frames_private":
                 sources=job.get("sources")
                 if not isinstance(sources,list) or not 1<=len(sources)<=3:
                     raise ValueError("1-3 original sources required")
@@ -37,7 +59,9 @@ class Handler(BaseHandler):
                         sample=frame_samples(path,interval=3,max_seconds=54,max_frames=18)
                         result.append({"source_id":source["source_id"],**sample})
                 return self.answer(200,{"status":"ORIGINAL_FRAMES_UNVERIFIED","publishing_enabled":False,"sources":result})
-            if mode == "cfit_autonomous_preview_staging":
+            if mode == "private_nick_voice_mix":
+                pass
+            elif mode == "cfit_autonomous_preview_staging":
                 video = render_autonomous(job)
             elif mode == "cfit_branded_preview_staging":
                 video = branded_preview(job)
