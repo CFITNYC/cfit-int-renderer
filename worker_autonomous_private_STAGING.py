@@ -1,5 +1,5 @@
 """Private autonomous-edit renderer. Executes source-backed AI editorial shot list, no fixed exercise choreography."""
-import pathlib, tempfile, subprocess, json, math
+import pathlib, tempfile, subprocess, json, math, textwrap
 from worker_v7_branded_preview_STAGING import download_signed, duration_seconds, normalize
 
 def render_autonomous(job):
@@ -53,8 +53,8 @@ def render_autonomous(job):
    filters=["-vf","scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,setpts=PTS-STARTPTS"]
    if i in label_by_shot:
     caption_file=t/f"caption-{i}.txt"
-    caption_file.write_text(label_by_shot[i],encoding="utf-8")
-    filters=["-vf","scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,setpts=PTS-STARTPTS,drawtext=textfile="+str(caption_file)+":fontsize=38:fontcolor=white:borderw=3:bordercolor=black:x=(w-text_w)/2:y=h*0.79"]
+    caption_file.write_text("\n".join(textwrap.wrap(label_by_shot[i],width=24,break_long_words=False,break_on_hyphens=False)),encoding="utf-8")
+    filters=["-vf","scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,setpts=PTS-STARTPTS,drawtext=textfile="+str(caption_file)+":fontsize=32:line_spacing=7:fontcolor=white:borderw=3:bordercolor=black:x=max(55,(w-text_w)/2):y=h*0.76"]
    subprocess.run(["ffmpeg","-nostdin","-hide_banner","-v","error","-filter_threads","1","-y","-ss",str(shot["start"]),"-t",str(shot["end"]-shot["start"]),"-i",str(src),*filters,"-an","-c:v","libx264","-threads","1","-preset","veryfast","-crf","21","-pix_fmt","yuv420p",str(dest)],check=True,timeout=100)
    segments.append(dest)
   midlist=t/"midlist.txt"
