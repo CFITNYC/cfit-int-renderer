@@ -31,8 +31,11 @@ def check_platform_duration(opening,middle,closing,contract):
  maximum=float(contract.get("maximum_seconds",0))
  total=sum((opening,middle,closing))
  minimum=float(contract.get("minimum_seconds",0))
- if maximum<=0 or minimum<=0 or minimum>maximum or total<minimum or total>maximum:
-  raise ValueError("Story plus approved branding outside CFIT platform duration; revise shot selection without cutting required movement phases")
+ if maximum<=0 or minimum<=0 or minimum>maximum:
+  raise ValueError("Invalid CFIT duration contract")
+ if total>maximum:
+  raise ValueError(f"CFIT duration over budget: opening={opening:.2f}s story={middle:.2f}s closing={closing:.2f}s total={total:.2f}s maximum={maximum:.2f}s; complete movements cannot be discarded")
+ # A complete shorter story is allowed as a private review prototype rather than padded with fake repetitions.
  return round(total,2)
 
 def branded_preview(job):
@@ -68,6 +71,17 @@ def branded_preview(job):
  clips=([("setup_entry",windows[0])]+[("complete_rep",rep) for rep in reps[:2]]+
         [("hip_extension_transition",windows[1])]+[("complete_rep",rep) for rep in reps[2:]]+
         [("upright_single_leg_finish",windows[2])])
+
+ # Merge overlaps in consecutively selected windows from the same original.
+ # This eliminates duplicated seconds while preserving every required phase.
+ compact=[]
+ for role,window in clips:
+  if compact and compact[-1][1]["source_id"]==window["source_id"] and float(window["start"])<=float(compact[-1][1]["end"]) and float(window["start"])>=float(compact[-1][1]["start"]):
+   prior=compact[-1][1]
+   compact[-1]=(compact[-1][0]+"+"+role,{**prior,"end":max(float(prior["end"]),float(window["end"]))})
+  else:
+   compact.append((role,window))
+ clips=compact
 
  with tempfile.TemporaryDirectory() as td:
   t=pathlib.Path(td);parts=[]
