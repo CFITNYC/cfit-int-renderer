@@ -77,6 +77,34 @@ def private_audio_mix(job):
         subprocess.run(["ffmpeg","-nostdin","-v","error","-y","-i",str(video),"-i",str(audio),"-map","0:v:0","-map","1:a:0",*video_filters,*codec,"-c:a","aac","-b:a","128k","-t",str(picture_duration+extension),"-movflags","+faststart",str(result)],check=True,timeout=120)
         return result.read_bytes()
 
+def private_music_mix(job):
+    """Create a new private music-backed review copy; never overwrite the source."""
+    if job.get("founder_review_required") is not True or job.get("publishing_enabled") is not False:
+        raise ValueError("Private music review only")
+    from worker_v7_branded_preview_STAGING import duration_seconds
+    with tempfile.TemporaryDirectory() as td:
+        root=pathlib.Path(td)
+        picture=root/"narrated.mp4"; music=root/"instrumental.mp3"; final=root/"music-review.mp4"
+        download_signed(job.get("video_signed_url",""),picture)
+        download_signed(job.get("music_signed_url",""),music)
+        picture_seconds=duration_seconds(picture)
+        music_seconds=duration_seconds(music)
+        if not 5 <= picture_seconds <= 180 or not 5 <= music_seconds <= 180:
+            raise ValueError("Invalid picture or soundtrack duration")
+        volume=float(job.get("music_volume",0.10))
+        if not 0.05 <= volume <= 0.16:
+            raise ValueError("Background music volume must be between 0.05 and 0.16")
+        # No post-processing on Nick speech; preserve original picture stream and vocals.
+        fade_start=max(0,picture_seconds-1.5)
+        filterstr=f"[1:a]volume={volume},afade=t=out:st={fade_start:.3f}:d=1.5[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]"
+        subprocess.run(["ffmpeg","-nostdin","-v","error","-y","-i",str(picture),
+          "-stream_loop","-1","-i",str(music),"-filter_complex",filterstr,
+          "-map","0:v:0","-map","[a]","-c:v","copy","-c:a","aac","-b:a","192k",
+          "-t",f"{picture_seconds:.3f}","-movflags","+faststart",str(final)],check=True,timeout=120)
+        if not final.exists() or final.stat().st_size<10000:
+            raise ValueError("Music render produced no video")
+        return final.read_bytes()
+
 class Handler(BaseHandler):
     def do_POST(self):
         if self.path != "/render":
@@ -94,6 +122,8 @@ class Handler(BaseHandler):
                 raise ValueError("Publishing must be disabled")
             if mode == "private_nick_voice_mix":
                 video=private_audio_mix(job)
+            elif mode == "private_music_mix":
+                video=private_music_mix(job)
             elif mode == "inspect_original_frames_private":
                 sources=job.get("sources")
                 if not isinstance(sources,list) or not 1<=len(sources)<=3:
@@ -108,7 +138,7 @@ class Handler(BaseHandler):
                         sample=frame_samples(path,interval=3,max_seconds=54,max_frames=18)
                         result.append({"source_id":source["source_id"],**sample})
                 return self.answer(200,{"status":"ORIGINAL_FRAMES_UNVERIFIED","publishing_enabled":False,"sources":result})
-            if mode == "private_nick_voice_mix":
+            if mode in ("private_nick_voice_mix","private_music_mix"):
                 pass
             elif mode == "cfit_autonomous_preview_staging":
                 video = render_autonomous(job)
