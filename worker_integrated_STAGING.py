@@ -27,9 +27,11 @@ def private_audio_mix(job):
             raise ValueError("Nick audio exceeds private file limit")
         picture_duration=duration_seconds(video)
         speech_duration=duration_seconds(audio)
-        extension=max(0.0,speech_duration-picture_duration+0.25)
-        if extension>18.0:
-            raise ValueError("Natural narration needs a new longer visual edit; more than 18s of frozen picture is not acceptable")
+        # LOCKED timeline: voice must fit the approved picture, including original outro.
+        # No clone-frame extension or audio-driven edits are permitted.
+        if speech_duration>picture_duration+0.10:
+            raise ValueError(f"Nick narration {speech_duration:.2f}s exceeds approved video {picture_duration:.2f}s; shorten narration without speeding voice")
+        extension=0.0
         words=job.get("timed_words") or []
         video_filters=[]
         if words:
