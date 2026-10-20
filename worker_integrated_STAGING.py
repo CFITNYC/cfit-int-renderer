@@ -86,7 +86,15 @@ def private_music_mix(job):
         root=pathlib.Path(td)
         picture=root/"narrated.mp4"; music=root/"instrumental.mp3"; final=root/"music-review.mp4"
         download_signed(job.get("video_signed_url",""),picture)
-        download_signed(job.get("music_signed_url",""),music)
+        import urllib.parse,urllib.request
+        mu=urllib.parse.urlsplit(job.get("music_signed_url",""))
+        expected_host=os.environ.get("CFIT_STORAGE_HOST","hszormivkbqvpfgfhktm.supabase.co")
+        if mu.scheme!="https" or mu.hostname!=expected_host or not mu.path.startswith("/storage/v1/object/sign/cfit-int-private-audio/") or not mu.path.lower().endswith(".mp3"):
+            raise ValueError("Signed private MP3 music required")
+        with urllib.request.urlopen(job["music_signed_url"],timeout=45) as stream,open(music,"wb") as f:
+            f.write(stream.read(15000001))
+        if music.stat().st_size>15000000:
+            raise ValueError("Private soundtrack exceeds size limit")
         picture_seconds=duration_seconds(picture)
         music_seconds=duration_seconds(music)
         if not 5 <= picture_seconds <= 180 or not 5 <= music_seconds <= 180:
