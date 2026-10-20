@@ -23,8 +23,13 @@ def private_audio_mix(job):
             raise ValueError("Signed Nick audio required")
         with urllib.request.urlopen(job["voice_signed_url"],timeout=35) as inp,open(audio,"wb") as out:
             out.write(inp.read(10000001))
-        if audio.stat().st_size>10000000 or duration_seconds(audio)>duration_seconds(video):
-            raise ValueError("Narration cannot exceed locked video duration")
+        if audio.stat().st_size>10000000:
+            raise ValueError("Nick audio exceeds private file limit")
+        picture_duration=duration_seconds(video)
+        speech_duration=duration_seconds(audio)
+        extension=max(0.0,speech_duration-picture_duration+0.25)
+        if extension>18.0:
+            raise ValueError("Natural narration needs a new longer visual edit; more than 18s of frozen picture is not acceptable")
         words=job.get("timed_words") or []
         video_filters=[]
         if words:
@@ -32,7 +37,7 @@ def private_audio_mix(job):
                 raise ValueError("Actual ElevenLabs word timing required")
             import math
             entries=[]
-            video_duration=duration_seconds(video)
+            video_duration=picture_duration+extension
             for item in words:
                 start=item.get("start");end=item.get("end");value=item.get("text")
                 if not isinstance(value,str) or not isinstance(start,(int,float)) or not isinstance(end,(int,float)) or not (math.isfinite(start) and math.isfinite(end)):
@@ -65,9 +70,11 @@ def private_audio_mix(job):
                 lines.append(f"Dialogue: 0,{ass_time(group[0][0])},{ass_time(group[-1][1])},Nick,,0,0,0,,{phrase}")
             ass=root/"narration.ass"
             ass.write_text("\n".join(lines)+"\n",encoding="utf-8")
-            video_filters=["-vf","subtitles="+str(ass)]
-        codec=["-c:v","libx264","-preset","veryfast","-crf","21"] if words else ["-c:v","copy"]
-        subprocess.run(["ffmpeg","-nostdin","-v","error","-y","-i",str(video),"-i",str(audio),"-map","0:v:0","-map","1:a:0",*video_filters,*codec,"-c:a","aac","-b:a","128k","-t",str(duration_seconds(video)),"-movflags","+faststart",str(result)],check=True,timeout=120)
+            video_filters=["-vf","tpad=stop_mode=clone:stop_duration="+str(round(extension,3))+",subtitles="+str(ass)] if extension>0 else ["-vf","subtitles="+str(ass)]
+        if extension>0 and not words:
+            video_filters=["-vf","tpad=stop_mode=clone:stop_duration="+str(round(extension,3))]
+        codec=["-c:v","libx264","-preset","veryfast","-crf","21"] if words or extension>0 else ["-c:v","copy"]
+        subprocess.run(["ffmpeg","-nostdin","-v","error","-y","-i",str(video),"-i",str(audio),"-map","0:v:0","-map","1:a:0",*video_filters,*codec,"-c:a","aac","-b:a","128k","-t",str(picture_duration+extension),"-movflags","+faststart",str(result)],check=True,timeout=120)
         return result.read_bytes()
 
 class Handler(BaseHandler):
