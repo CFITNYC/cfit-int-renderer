@@ -106,7 +106,7 @@ def private_music_mix(job):
             raise ValueError("Background music volume must be between 0.05 and 0.16")
         # No post-processing on Nick speech; preserve original picture stream and vocals.
         fade_start=max(0,picture_seconds-1.5)
-        filterstr=f"[1:a]volume={volume},afade=t=out:st={fade_start:.3f}:d=1.5[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]"
+        filterstr=f"[1:a]volume={volume},afade=t=out:st={fade_start:.3f}:d=1.5[m];[0:a][m]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0[a]"
         subprocess.run(["ffmpeg","-nostdin","-v","error","-y","-i",str(picture),
           "-stream_loop","-1","-i",str(music),"-filter_complex",filterstr,
           "-map","0:v:0","-map","[a]","-c:v","copy","-c:a","aac","-b:a","192k",
