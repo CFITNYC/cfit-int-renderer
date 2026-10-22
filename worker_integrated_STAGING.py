@@ -144,7 +144,22 @@ class Handler(BaseHandler):
                         if not isinstance(source,dict) or not source.get("source_id") or source.get("original_source") is not True:
                             raise ValueError("Original source and ID required")
                         path=pathlib.Path(td)/("inspection-"+str(i)+".mp4")
-                        download_signed(source.get("signed_url",""),path)
+                        # Intake originals may be MOV; keep preview editing's MP4-only gate intact.
+                        from urllib.parse import urlsplit
+                        from urllib.request import urlopen
+                        u=urlsplit(source.get("signed_url",""))
+                        ext=pathlib.PurePosixPath(u.path).suffix.lower()
+                        host=os.environ.get("CFIT_STORAGE_HOST","hszormivkbqvpfgfhktm.supabase.co")
+                        if u.scheme!="https" or u.hostname!=host or not u.path.startswith("/storage/v1/object/sign/cfit-exercise-videos/") or ext not in (".mov",".mp4",".m4v"):
+                            raise ValueError("Private original video URL required")
+                        with urlopen(source["signed_url"],timeout=45) as inp,open(path,"wb") as out:
+                            total=0
+                            while True:
+                                chunk=inp.read(65536)
+                                if not chunk:break
+                                total+=len(chunk)
+                                if total>200000000:raise ValueError("Original exceeds 200 MB")
+                                out.write(chunk)
                         sample=frame_samples(path,interval=3,max_seconds=54,max_frames=18)
                         result.append({"source_id":source["source_id"],**sample})
                 return self.answer(200,{"status":"ORIGINAL_FRAMES_UNVERIFIED","publishing_enabled":False,"sources":result})
