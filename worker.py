@@ -1,5 +1,6 @@
 import os,json,hmac,tempfile,urllib.parse,urllib.request,subprocess,pathlib,re
 from http.server import ThreadingHTTPServer,BaseHTTPRequestHandler
+from private_intake_frames import inspect_private_frames
 HOST=os.environ.get("CFIT_STORAGE_HOST","hszormivkbqvpfgfhktm.supabase.co")
 def best_motion_start(src, seconds):
  # Analyze low-resolution frames from the original source without retaining video frames.
@@ -98,7 +99,10 @@ class Handler(BaseHTTPRequestHandler):
   try:
    n=int(self.headers.get("Content-Length","0"))
    if n<1 or n>16000:return self.answer(413,{"error":"Invalid body length"})
-   data=render(json.loads(self.rfile.read(n)))
+   request=json.loads(self.rfile.read(n))
+   if request.get("mode")=="inspect_original_frames_private":
+    return self.answer(200,inspect_private_frames(request,HOST))
+   data=render(request)
    self.send_response(200);self.send_header("Content-Type","video/mp4");self.send_header("Content-Length",str(len(data)));self.send_header("Cache-Control","no-store");self.end_headers();self.wfile.write(data)
   except ValueError as e:self.answer(422,{"error":str(e)})
   except Exception:self.answer(500,{"error":"Render failed"})
