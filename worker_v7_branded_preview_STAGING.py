@@ -8,7 +8,7 @@ def download_signed(url,dest):
  if p.scheme!="https" or p.hostname!=HOST or not p.path.startswith("/storage/v1/object/sign/"): raise ValueError("Unsigned or unsupported asset")
  remainder=p.path.split("/storage/v1/object/sign/",1)[1]
  if remainder.split("/",1)[0] not in ALLOWED_BUCKETS or pathlib.PurePosixPath(p.path).suffix.lower()!=".mp4": raise ValueError("Invalid asset source")
- with urllib.request.urlopen(url,timeout=45) as response,open(dest,"wb") as f:
+ with urllib.request.urlopen(url,timeout=120) as response,open(dest,"wb") as f:
   n=0
   while True:
    chunk=response.read(65536)
