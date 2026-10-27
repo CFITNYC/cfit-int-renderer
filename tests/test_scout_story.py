@@ -118,3 +118,11 @@ with tempfile.TemporaryDirectory() as td:
     a = p.read_text()
     assert "PlayResY: 900" in a and "0:00:00.80" in a and "\\pos(360,745)" in a     # voice clock + 0.7 s offset; 4:5 caption area centre (110 + 550 + 85)
 print("Scout layout v3: PASS")
+
+# ---- captions never touch the edges: 3 words only when they fit, else 2 or 1 ----
+gw = lambda txt: [(i, i + 0.5, w) for i, w in enumerate(txt.split())]
+assert [len(x) for x in ss.caption_groups(gw("from the ground."), 16)] == [3]
+assert [" ".join(w for _, _, w in x) for x in ss.caption_groups(gw("Method brings mobility, stability, and functional"), 16)] == ["Method brings", "mobility,", "stability, and", "functional"]
+assert all(len(" ".join(w for _, _, w in x)) <= 16 or len(x) == 1 for x in ss.caption_groups(gw("The CFIT Method brings mobility, stability, and functional strength together for athletes"), 16))
+assert ss.frame_geometry("9:16")["cap_chars"] == 16 and ss.frame_geometry("4:5")["cap_chars"] == 20
+print("Scout caption width: PASS")

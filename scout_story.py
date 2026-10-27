@@ -324,8 +324,8 @@ def render_story_v2(job, get=fetch):
 # Captions follow the voice word by word (current word gold) in the caption area, never over the footage.
 # Music sits low under the voice and dips while the voice speaks; loudness levelled for social media.
 FRAMES = {
-    "9:16": {"W": 720, "H": 1280, "TOP": 150, "BAR": 96, "ZONE": 230, "series": 22, "title": 30, "bar": 21, "cap": 62, "line": 52},
-    "4:5":  {"W": 720, "H": 900,  "TOP": 110, "BAR": 70, "ZONE": 170, "series": 18, "title": 24, "bar": 17, "cap": 50, "line": 42},
+    "9:16": {"W": 720, "H": 1280, "TOP": 150, "BAR": 96, "ZONE": 230, "series": 22, "title": 30, "bar": 21, "cap": 62, "line": 52, "cap_chars": 16},
+    "4:5":  {"W": 720, "H": 900,  "TOP": 110, "BAR": 70, "ZONE": 170, "series": 18, "title": 24, "bar": 17, "cap": 50, "line": 42, "cap_chars": 20},
 }
 VERSION_LIMITS = {
     "short": ({"setup": (1.0, 4.0), "challenge": (2.0, 7.0), "win": (1.5, 5.0)}, 13.0),
@@ -386,6 +386,17 @@ def check_story_v3(job):
         raise ValueError(f"Story is {total:.1f} s; the most is {most:g} s")
     return version, segs, cuts, frame_geometry(job.get("frame") or "9:16")
 
+def caption_groups(words, max_chars):
+    """Up to 3 words on screen at a time, but only as many as fit the width (long words: 2 or 1)."""
+    groups, cur = [], []
+    for w in words:
+        if cur and (len(cur) == 3 or len(" ".join(x[2] for x in cur + [w])) > max_chars):
+            groups.append(cur); cur = []
+        cur.append(w)
+    if cur:
+        groups.append(cur)
+    return groups
+
 def captions_ass_v3(path, g, words, offset, hook="", payoff="", setup_end=0.0, win_start=0.0, story_len=0.0, video_len=0.0):
     """words: [(start, end, text)] on the voice's own clock; shown on the video clock (offset added).
     Without a voice: hook over the setup, payoff over the win (story clock)."""
@@ -398,7 +409,7 @@ def captions_ass_v3(path, g, words, offset, hook="", payoff="", setup_end=0.0, w
     pos = f"{{\\pos({g['W'] // 2},{cy})}}"
     if words:
         timed = [(a + offset, z + offset, w) for a, z, w in words]
-        groups = [timed[i:i + 3] for i in range(0, len(timed), 3)]
+        groups = caption_groups(timed, g.get("cap_chars", 16))
         for gi, grp in enumerate(groups):
             hold = groups[gi + 1][0][0] if gi + 1 < len(groups) else video_len
             for k, (a, z, _) in enumerate(grp):
