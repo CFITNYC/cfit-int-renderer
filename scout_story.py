@@ -13,6 +13,7 @@ FFMPEG = "ffmpeg"
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 HOST = "hszormivkbqvpfgfhktm.supabase.co"
 SOURCE_BUCKETS = {"cfit-exercise-videos", "cfit-social-exports"}
+AUDIO_BUCKETS = {"cfit-int-private-audio", "cfit-social-exports"}   # music tracks; Scout's saved voice reads
 MAX_SOURCE_BYTES = 200_000_000
 SIZE, FPS = "720:1280", 30
 ROLES = ("setup", "challenge", "win")
@@ -23,12 +24,16 @@ BRAND_MATCH = 0.55   # thumbnail correlation with your opening/closing (calibrat
 CUTS_FLAG = 3        # hard cuts inside a clip that suggest it was already edited
 THUMB_W, THUMB_H = 32, 56
 
-def fetch(url, dest):
+def fetch(url, dest, audio=False):
     p = urllib.parse.urlsplit(url or "")
     if p.scheme != "https" or p.hostname != HOST or not p.path.startswith("/storage/v1/object/sign/"):
         raise ValueError("Unsigned or unsupported video link")
     bucket = p.path.split("/storage/v1/object/sign/", 1)[1].split("/", 1)[0]
-    if bucket not in SOURCE_BUCKETS or pathlib.PurePosixPath(urllib.parse.unquote(p.path)).suffix.lower() not in (".mp4", ".mov", ".m4v"):
+    suffix = pathlib.PurePosixPath(urllib.parse.unquote(p.path)).suffix.lower()
+    if audio:
+        if bucket not in AUDIO_BUCKETS or suffix not in (".mp3", ".wav", ".mp4"):
+            raise ValueError("Invalid audio source")
+    elif bucket not in SOURCE_BUCKETS or suffix not in (".mp4", ".mov", ".m4v"):
         raise ValueError("Invalid video source")
     with urllib.request.urlopen(url, timeout=120) as r, open(dest, "wb") as f:
         n = 0
@@ -226,6 +231,8 @@ def text_filter(textfile, size, color, start, end):
             f"x=(w-text_w)/2:y=h*0.30:line_spacing=10:box=1:boxcolor=black@0.55:boxborderw=18:enable='between(t,{start:.2f},{end:.2f})'")
 
 def render_story(job, get=fetch):
+    if job.get("layout") == "v3":
+        return render_story_v3(job, get)
     if job.get("layout") == "v2":
         return render_story_v2(job, get)
     segs, hook, payoff, story_len = check_story(job)
@@ -308,4 +315,181 @@ def render_story_v2(job, get=fetch):
                  "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv",
                  "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(out)]
         subprocess.run(args, check=True, timeout=150, capture_output=True)
+        return out.read_bytes()
+
+
+# ================= layout v3 (Stage 3, 2026-10-27): platform versions, Nick voice, music =================
+# Short version (TikTok, Reels, Shorts): 9:16, the challenge as fast cuts, the voice starts over the opening logo.
+# Long version (LinkedIn, Facebook): 4:5, three calm parts, the voice starts when the story starts.
+# Captions follow the voice word by word (current word gold) in the caption area, never over the footage.
+# Music sits low under the voice and dips while the voice speaks; loudness levelled for social media.
+FRAMES = {
+    "9:16": {"W": 720, "H": 1280, "TOP": 150, "BAR": 96, "ZONE": 230, "series": 22, "title": 30, "bar": 21, "cap": 62, "line": 52},
+    "4:5":  {"W": 720, "H": 900,  "TOP": 110, "BAR": 70, "ZONE": 170, "series": 18, "title": 24, "bar": 17, "cap": 50, "line": 42},
+}
+VERSION_LIMITS = {
+    "short": ({"setup": (1.0, 4.0), "challenge": (2.0, 7.0), "win": (1.5, 5.0)}, 13.0),
+    "long":  ({"setup": (2.0, 6.0), "challenge": (8.0, 20.0), "win": (4.0, 9.0)}, 32.0),
+}
+CUT_SECONDS = 1.6
+
+def frame_geometry(frame):
+    if frame not in FRAMES:
+        raise ValueError("Frame must be 9:16 or 4:5")
+    g = dict(FRAMES[frame])
+    g["WIN"] = g["H"] - g["TOP"] - g["BAR"] - g["ZONE"]
+    g["ZONE_Y"] = g["TOP"] + g["WIN"]
+    return g
+
+def challenge_cuts(start, end, cuts):
+    """Fast cuts: `cuts` short pieces spread evenly across the challenge (Scout uses the same formula)."""
+    length = end - start
+    if cuts <= 1:
+        return [(start, end)]
+    piece = min(CUT_SECONDS, length / cuts)
+    step = (length - piece) / (cuts - 1)
+    return [(round(start + i * step, 3), round(start + i * step + piece, 3)) for i in range(cuts)]
+
+def story_pieces(segs, cuts):
+    pieces = []
+    for s in segs:
+        a, z = float(s["start"]), float(s["end"])
+        if s["role"] == "challenge":
+            pieces += [(s, x, y) for x, y in challenge_cuts(a, z, cuts)]
+        else:
+            pieces.append((s, a, z))
+    return pieces
+
+def check_story_v3(job):
+    if job.get("mode") != "scout_story_short" or job.get("publishing_enabled") is not False:
+        raise ValueError("Private Scout story required")
+    version = job.get("version")
+    if version not in VERSION_LIMITS:
+        raise ValueError("Version must be short or long")
+    b = job.get("branding") or {}
+    if b.get("opening_role") != "opening" or b.get("closing_role") != "closing":
+        raise ValueError("Opening and closing roles required")
+    segs = job.get("segments")
+    if not isinstance(segs, list) or [s.get("role") for s in segs] != list(ROLES):
+        raise ValueError("Story needs exactly setup, challenge, win, in that order")
+    limits, most = VERSION_LIMITS[version]
+    cuts = int(job.get("challenge_cuts", 1))
+    if not 1 <= cuts <= 4:
+        raise ValueError("Challenge cuts must be 1-4")
+    for s in segs:
+        a, z = float(s.get("start", -1)), float(s.get("end", -1))
+        lo, hi = limits[s["role"]]
+        if not (0 <= a < z) or not (lo - 0.001 <= z - a <= hi + 0.001):
+            raise ValueError(f"{s['role']} must be {lo:g}-{hi:g} seconds")
+    total = sum(z - a for _, a, z in story_pieces(segs, cuts))   # the length viewers see, after the fast cuts
+    if total > most + 0.001:
+        raise ValueError(f"Story is {total:.1f} s; the most is {most:g} s")
+    return version, segs, cuts, frame_geometry(job.get("frame") or "9:16")
+
+def captions_ass_v3(path, g, words, offset, hook="", payoff="", setup_end=0.0, win_start=0.0, story_len=0.0, video_len=0.0):
+    """words: [(start, end, text)] on the voice's own clock; shown on the video clock (offset added).
+    Without a voice: hook over the setup, payoff over the win (story clock)."""
+    cy = g["ZONE_Y"] + g["ZONE"] // 2
+    lines = ["[Script Info]", "ScriptType: v4.00+", f"PlayResX: {g['W']}", f"PlayResY: {g['H']}", "WrapStyle: 2", "[V4+ Styles]",
+             "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+             f"Style: Cap,{FONT_NAME},{g['cap']},&H00FFFFFF,&H00FFFFFF,&H00391210,&H00000000,-1,0,0,0,100,100,0,0,1,3,0,5,30,30,0,1",
+             f"Style: Line,{FONT_NAME},{g['line']},&H00FFFFFF,&H00FFFFFF,&H00391210,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,5,30,30,0,1",
+             "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
+    pos = f"{{\\pos({g['W'] // 2},{cy})}}"
+    if words:
+        timed = [(a + offset, z + offset, w) for a, z, w in words]
+        groups = [timed[i:i + 3] for i in range(0, len(timed), 3)]
+        for gi, grp in enumerate(groups):
+            hold = groups[gi + 1][0][0] if gi + 1 < len(groups) else video_len
+            for k, (a, z, _) in enumerate(grp):
+                end = grp[k + 1][0] if k + 1 < len(grp) else (hold if hold - z < 1.0 else z + 0.3)
+                text = " ".join((f"{{\\c{GOLD_ASS}}}{ass_escape(w)}{{\\c&H00FFFFFF&}}" if j == k else ass_escape(w)) for j, (_, _, w) in enumerate(grp))
+                lines.append(f"Dialogue: 0,{ass_time(a)},{ass_time(min(end, video_len))},Cap,,0,0,0,,{pos}{text}")
+    else:
+        if hook:
+            lines.append(f"Dialogue: 1,{ass_time(offset)},{ass_time(offset + setup_end)},Line,,0,0,0,,{pos}{ass_escape(hook).replace(chr(10), chr(92) + 'N')}")
+        if payoff:
+            lines.append(f"Dialogue: 1,{ass_time(offset + win_start)},{ass_time(offset + story_len)},Line,,0,0,0,,{pos}{{\\c{GOLD_ASS}}}{ass_escape(payoff).replace(chr(10), chr(92) + 'N')}")
+    pathlib.Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+def render_story_v3(job, get=fetch):
+    version, segs, cuts, g = check_story_v3(job)
+    audio = job.get("audio") or {}
+    b = job["branding"]
+    with tempfile.TemporaryDirectory() as td:
+        t = pathlib.Path(td)
+        first, last, silent, out = t / "opening.mp4", t / "closing.mp4", t / "silent.mp4", t / "story.mp4"
+        get(b["opening_signed_url"], first); get(b["closing_signed_url"], last)
+        srcs = {}
+        for s in segs:
+            if s["signed_url"] not in srcs:
+                srcs[s["signed_url"]] = t / f"src{len(srcs)}"; get(s["signed_url"], srcs[s["signed_url"]])
+        pieces = story_pieces(segs, cuts)
+        story_len = sum(z - a for _, a, z in pieces)
+        setup_end = float(segs[0]["end"]) - float(segs[0]["start"])
+        win_start = story_len - (float(segs[2]["end"]) - float(segs[2]["start"]))
+        opening_len, closing_len = duration(first), duration(last)
+        video_len = opening_len + story_len + closing_len
+        words = []
+        if audio.get("voice_signed_url"):
+            offset = float(audio.get("voice_offset", 0))
+            if not 0 <= offset <= opening_len + 0.25:
+                raise ValueError("The voice must start during the opening or when the story starts")
+            words = check_words(job.get("words") or [], video_len - offset)
+        else:
+            offset = opening_len
+        for name, value in {"title": clean(job.get("title"), 40) or "CFIT METHOD", "series": clean(job.get("series"), 30) or "STAY GROUNDED",
+                            "bar": "CFIT METHOD  |  CREATIVE FITNESS NYC"}.items():
+            (t / f"{name}.txt").write_text(value)
+        captions_ass_v3(t / "captions.ass", g, words, offset, "" if words else wrap(clean(job.get("hook"), 40)), "" if words else wrap(clean(job.get("payoff"), 48)),
+                        setup_end, win_start, story_len, video_len)
+        W, H, WIN, TOP, BAR, ZONE_Y = g["W"], g["H"], g["WIN"], g["TOP"], g["BAR"], g["ZONE_Y"]
+        args = [FFMPEG, "-nostdin", "-hide_banner", "-v", "error", "-y", "-i", str(first)]
+        for s, a, z in pieces:
+            args += ["-ss", f"{a:.3f}", "-t", f"{z - a:.3f}", "-i", str(srcs[s["signed_url"]])]
+        n = len(pieces)
+        args += ["-i", str(last)]
+        colour = "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv"
+        tag = f"{colour},setsar=1,fps={FPS},format=yuv420p"
+        fit = f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=0x0B0D26,{tag}"
+        def win(idx, sw, sh, label):
+            if sw / sh >= 0.9:
+                return f"[{idx}:v]scale={W}:{WIN}:force_original_aspect_ratio=increase,crop={W}:{WIN},{tag}[{label}]"
+            return (f"[{idx}:v]split[{label}a][{label}b];[{label}a]scale={W}:{WIN}:force_original_aspect_ratio=increase,crop={W}:{WIN},gblur=sigma=28,eq=brightness=-0.12[{label}bg];"
+                    f"[{label}b]scale={W}:{WIN}:force_original_aspect_ratio=decrease[{label}fg];[{label}bg][{label}fg]overlay=(W-w)/2:(H-h)/2,{tag}[{label}]")
+        windows = ";".join(win(i + 1, *video_size(srcs[s["signed_url"]]), f"w{i}") for i, (s, _, _) in enumerate(pieces))
+        story = (f"{windows};{''.join(f'[w{i}]' for i in range(n))}concat=n={n}:v=1:a=0,pad={W}:{H}:0:{TOP}:color=0x0B0D26,{tag},"
+                 f"drawbox=x=0:y=0:w=iw:h={TOP}:color=0x101239@1:t=fill,"
+                 f"drawtext=fontfile='{FONT}':textfile='{t / 'series.txt'}':fontsize={g['series']}:fontcolor=0xF2BE50:x=(w-text_w)/2:y={int(TOP * 0.22)},"
+                 f"drawtext=fontfile='{FONT}':textfile='{t / 'title.txt'}':fontsize={g['title']}:fontcolor=white:x=(w-text_w)/2:y={int(TOP * 0.52)},"
+                 f"drawbox=x=0:y={ZONE_Y}:w=iw:h=3:color=0xF2BE50@0.85:t=fill,"
+                 f"drawbox=x=0:y=ih-{BAR}:w=iw:h={BAR}:color=black@0.85:t=fill,"
+                 f"drawtext=fontfile='{FONT}':textfile='{t / 'bar.txt'}':fontsize={g['bar']}:fontcolor=white:x=(w-text_w)/2:y=h-{int(BAR * 0.65)}[mid]")
+        graph = f"[0:v]{fit}[a];{story};[{n + 1}:v]{fit}[c];[a][mid][c]concat=n=3:v=1:a=0,subtitles='{t / 'captions.ass'}'[v]"
+        args += ["-filter_complex", graph, "-map", "[v]", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
+                 "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv", "-movflags", "+faststart", str(silent)]
+        subprocess.run(args, check=True, timeout=180, capture_output=True)
+        vlen = duration(silent)
+        # sound: Nick voice at its offset, music low under it (dipping while he speaks), levelled for social media
+        voice, music = t / "voice", t / "music"
+        mix = [FFMPEG, "-nostdin", "-hide_banner", "-v", "error", "-y", "-i", str(silent)]
+        if audio.get("voice_signed_url"):
+            get(audio["voice_signed_url"], voice, True); mix += ["-i", str(voice)]
+        if audio.get("music_signed_url"):
+            get(audio["music_signed_url"], music, True); mix += ["-stream_loop", "-1", "-i", str(music)]
+        has_v, has_m = bool(audio.get("voice_signed_url")), bool(audio.get("music_signed_url"))
+        ms = int(offset * 1000)
+        fade = f"afade=t=in:d=0.8,afade=t=out:st={max(0.0, vlen - 1.5):.2f}:d=1.5"
+        if has_v and has_m:
+            f = (f"[1:a]aformat=channel_layouts=stereo,adelay={ms}|{ms},apad[vo];[vo]asplit=2[v1][vsc];"
+                 f"[2:a]aformat=channel_layouts=stereo,atrim=0:{vlen:.2f},volume=0.22,{fade}[m];[m][vsc]sidechaincompress=threshold=0.02:ratio=10:attack=15:release=350[md];"
+                 f"[v1][md]amix=inputs=2:normalize=0:duration=first,atrim=0:{vlen:.2f},loudnorm=I=-14:TP=-1.5:LRA=11[a]")
+        elif has_v:
+            f = f"[1:a]aformat=channel_layouts=stereo,adelay={ms}|{ms},apad,atrim=0:{vlen:.2f},loudnorm=I=-14:TP=-1.5:LRA=11[a]"
+        elif has_m:
+            f = f"[1:a]aformat=channel_layouts=stereo,atrim=0:{vlen:.2f},volume=0.5,{fade},loudnorm=I=-16:TP=-1.5:LRA=11[a]"
+        else:
+            f = f"anullsrc=channel_layout=stereo:sample_rate=48000,atrim=0:{vlen:.2f}[a]"
+        mix += ["-filter_complex", f, "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-movflags", "+faststart", str(out)]
+        subprocess.run(mix, check=True, timeout=120, capture_output=True)
         return out.read_bytes()

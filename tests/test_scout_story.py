@@ -72,3 +72,49 @@ calls = []
 ss.render_story_v2 = lambda job, get=None: calls.append(job["layout"]) or b"v2"
 assert ss.render_story({**story, "layout": "v2"}) == b"v2" and calls == ["v2"]
 print("Scout layout v2: PASS")
+
+# ---- layout v3 (Stage 3): versions, 4:5 frame, fast cuts, voice + music ----
+for fr in ("9:16", "4:5"):
+    g = ss.frame_geometry(fr)
+    assert g["TOP"] + g["WIN"] + g["ZONE"] + g["BAR"] == g["H"] and g["WIN"] > 0
+assert ss.frame_geometry("4:5")["H"] == 900 and ss.frame_geometry("9:16")["H"] == 1280
+try:
+    ss.frame_geometry("1:1"); raise AssertionError("accepted 1:1")
+except ValueError:
+    pass
+cuts = ss.challenge_cuts(2.5, 9.5, 3)
+assert len(cuts) == 3 and cuts[0] == (2.5, 4.1) and cuts[-1] == (7.9, 9.5) and all(abs((z - a) - 1.6) < 1e-9 for a, z in cuts)
+assert ss.challenge_cuts(3, 8, 1) == [(3, 8)]
+v3 = {"mode": "scout_story_short", "publishing_enabled": False, "version": "short", "frame": "9:16", "challenge_cuts": 3, "branding": brand,
+      "segments": [seg("setup", 0, 4), seg("challenge", 2.5, 9.5), seg("win", 8.5, 12.5)]}
+version, segs3, ncuts, g3 = ss.check_story_v3(v3)                      # 4 + 3 cuts of 1.6 + 4 = 12.8 s seen: allowed
+assert version == "short" and ncuts == 3
+try:
+    ss.check_story_v3({**v3, "segments": [seg("setup", 0, 4), seg("challenge", 2.5, 9.5), seg("win", 8, 13)]}); raise AssertionError("13.8 s short accepted")
+except ValueError as e:
+    assert "Story is 13.8 s; the most is 13" in str(e)                  # the limit counts the length after the fast cuts
+for bad, words in [({**v3, "version": "medium"}, "short or long"), ({**v3, "publishing_enabled": True}, "Private Scout story"),
+                   ({**v3, "challenge_cuts": 6}, "1-4"), ({**v3, "frame": "16:9"}, "9:16 or 4:5")]:
+    try:
+        ss.check_story_v3(bad); raise AssertionError("accepted " + words)
+    except ValueError as e:
+        assert words in str(e), (words, str(e))
+long_job = {**v3, "version": "long", "frame": "4:5", "challenge_cuts": 1, "segments": [seg("setup", 0, 4), seg("challenge", 5, 23), seg("win", 24, 31)]}
+assert ss.check_story_v3(long_job)[0] == "long"
+try:
+    ss.check_story_v3({**long_job, "segments": [seg("setup", 0, 4), seg("challenge", 5, 25), seg("win", 26, 35)]}); raise AssertionError("long over 32 s accepted")
+except ValueError as e:
+    assert "the most is 32" in str(e)
+au = "https://hszormivkbqvpfgfhktm.supabase.co/storage/v1/object/sign/cfit-int-private-audio/u/private-soundtracks/a.mp3?t"
+for url, audio, words in [(au, False, "Invalid video source"), (au.replace(".mp3", ".exe"), True, "Invalid audio source"),
+                          (au.replace("cfit-int-private-audio", "cfit-billing"), True, "Invalid audio source")]:
+    try:
+        ss.fetch(url, "/dev/null", audio); raise AssertionError("accepted " + url)
+    except ValueError as e:
+        assert words in str(e)
+with tempfile.TemporaryDirectory() as td:
+    p = pathlib.Path(td) / "v3.ass"
+    ss.captions_ass_v3(p, ss.frame_geometry("4:5"), [(0.1, 0.4, "Most"), (0.5, 0.9, "training")], 0.7, video_len=10)
+    a = p.read_text()
+    assert "PlayResY: 900" in a and "0:00:00.80" in a and "\\pos(360,745)" in a     # voice clock + 0.7 s offset; 4:5 caption area centre (110 + 550 + 85)
+print("Scout layout v3: PASS")
