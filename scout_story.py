@@ -523,8 +523,23 @@ def captions_ass_v3(path, g, words, offset, hook="", payoff="", setup_end=0.0, w
                      f"{{\\an5\\pos({g['W'] // 2},{(y0 + GOLD_LINE + y1) // 2})\\alpha&HFF&\\t({slide},{fade_end},\\alpha&H00&)}}{tag_text}")
     pathlib.Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+END_HOLD_MAX, CUT_FADE = 1.0, 0.2   # Scout auto-fit: hold the last frame (s); soft fade when the voice is ended at a word
+
+def check_ending(job):
+    """end_hold: seconds to hold the last story frame (0-1); voice_cut_at: end the voice there (voice clock), or None."""
+    hold = float(job.get("end_hold") or 0)
+    if not 0 <= hold <= END_HOLD_MAX:
+        raise ValueError("End hold must be 0-1 s")
+    cut = job.get("voice_cut_at")
+    if cut is not None:
+        cut = float(cut)
+        if cut < 0.5:
+            raise ValueError("Voice cut must be after 0.5 s")
+    return round(hold, 2), cut
+
 def render_story_v3(job, get=fetch):
     version, segs, cuts, g = check_story_v3(job)
+    hold, cut = check_ending(job)
     tagline = tagline_lines(job.get("end_tagline"))
     audio = job.get("audio") or {}
     b = job["branding"]
@@ -537,9 +552,9 @@ def render_story_v3(job, get=fetch):
             if s["signed_url"] not in srcs:
                 srcs[s["signed_url"]] = t / f"src{len(srcs)}"; get(s["signed_url"], srcs[s["signed_url"]])
         pieces = story_pieces(segs, cuts)
-        story_len = sum(z - a for _, a, z in pieces)
+        story_len = sum(z - a for _, a, z in pieces) + hold     # the held last frame is part of the story
         setup_end = float(segs[0]["end"]) - float(segs[0]["start"])
-        win_start = story_len - (float(segs[2]["end"]) - float(segs[2]["start"]))
+        win_start = story_len - hold - (float(segs[2]["end"]) - float(segs[2]["start"]))   # the hold comes after the win footage
         opening_len, closing_len = duration(first), duration(last)
         video_len = opening_len + story_len + closing_len
         words = []
@@ -548,6 +563,8 @@ def render_story_v3(job, get=fetch):
             if not 0 <= offset <= opening_len + 0.25:
                 raise ValueError("The voice must start during the opening or when the story starts")
             words = check_words(job.get("words") or [], video_len - offset)
+            if cut is not None:                                  # the voice ends at a word: no captions after it
+                words = [w for w in words if w[1] <= cut + 0.01]
         else:
             offset = opening_len
         for name, value in {"title": clean(job.get("title"), 40) or "CFIT METHOD", "series": clean(job.get("series"), 30) or "STAY GROUNDED",
@@ -578,7 +595,8 @@ def render_story_v3(job, get=fetch):
             return (f"[{idx}:v]split[{label}a][{label}b];[{label}a]scale={W}:{WIN}:force_original_aspect_ratio=increase,crop={W}:{WIN},gblur=sigma=28,eq=brightness=-0.12[{label}bg];"
                     f"[{label}b]scale={W - 2 * edge}:{WIN}:force_original_aspect_ratio=increase,crop={W - 2 * edge}:{WIN}[{label}fg];[{label}bg][{label}fg]overlay=(W-w)/2:(H-h)/2,{tag}[{label}]")
         windows = ";".join(win(i + 1, *video_size(srcs[s["signed_url"]]), f"w{i}", s["signed_url"]) for i, (s, _, _) in enumerate(pieces))
-        story = (f"{windows};{''.join(f'[w{i}]' for i in range(n))}concat=n={n}:v=1:a=0,pad={W}:{H}:0:{TOP}:color=0x0B0D26,{tag},"
+        held = f"tpad=stop_mode=clone:stop_duration={hold:.2f}," if hold > 0 else ""
+        story = (f"{windows};{''.join(f'[w{i}]' for i in range(n))}concat=n={n}:v=1:a=0,{held}pad={W}:{H}:0:{TOP}:color=0x0B0D26,{tag},"
                  f"drawbox=x=0:y=0:w=iw:h={TOP}:color=0x101239@1:t=fill,"
                  f"drawtext=fontfile='{FONT}':textfile='{t / 'series.txt'}':fontsize={g['series']}:fontcolor=0xF2BE50:x=(w-text_w)/2:y={int(TOP * 0.22)},"
                  f"drawtext=fontfile='{FONT}':textfile='{t / 'title.txt'}':fontsize={g['title']}:fontcolor=white:x=(w-text_w)/2:y={int(TOP * 0.52)},"
@@ -600,13 +618,14 @@ def render_story_v3(job, get=fetch):
             get(audio["music_signed_url"], music, True); mix += ["-stream_loop", "-1", "-i", str(music)]
         has_v, has_m = bool(audio.get("voice_signed_url")), bool(audio.get("music_signed_url"))
         ms = int(offset * 1000)
+        vcut = f"atrim=0:{cut:.3f},afade=t=out:st={max(0.0, cut - CUT_FADE):.3f}:d={CUT_FADE},asetpts=PTS-STARTPTS," if cut is not None else ""
         fade = f"afade=t=in:d=0.8,afade=t=out:st={max(0.0, vlen - 1.5):.2f}:d=1.5"
         if has_v and has_m:
-            f = (f"[1:a]aformat=channel_layouts=stereo,adelay={ms}|{ms},apad[vo];[vo]asplit=2[v1][vsc];"
+            f = (f"[1:a]aformat=channel_layouts=stereo,{vcut}adelay={ms}|{ms},apad[vo];[vo]asplit=2[v1][vsc];"
                  f"[2:a]aformat=channel_layouts=stereo,atrim=0:{vlen:.2f},volume=0.22,{fade}[m];[m][vsc]sidechaincompress=threshold=0.02:ratio=10:attack=15:release=350[md];"
                  f"[v1][md]amix=inputs=2:normalize=0:duration=first,atrim=0:{vlen:.2f},loudnorm=I=-14:TP=-1.5:LRA=11[a]")
         elif has_v:
-            f = f"[1:a]aformat=channel_layouts=stereo,adelay={ms}|{ms},apad,atrim=0:{vlen:.2f},loudnorm=I=-14:TP=-1.5:LRA=11[a]"
+            f = f"[1:a]aformat=channel_layouts=stereo,{vcut}adelay={ms}|{ms},apad,atrim=0:{vlen:.2f},loudnorm=I=-14:TP=-1.5:LRA=11[a]"
         elif has_m:
             f = f"[1:a]aformat=channel_layouts=stereo,atrim=0:{vlen:.2f},volume=0.5,{fade},loudnorm=I=-16:TP=-1.5:LRA=11[a]"
         else:

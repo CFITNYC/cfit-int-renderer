@@ -193,3 +193,16 @@ assert ss.widen_fits(None, 1080, 1920, 720, 804, ss.SIDE_EDGE) is False         
 src = open("scout_story.py").read()
 assert '"-an", "-c:v", "libx264"' in src and 'mix += ["-filter_complex", f, "-map", "0:v", "-map", "[a]"' in src   # sound: picture built silent; only voice + music mixed
 print("Scout whole-body fit + sound lock: PASS")
+
+# ---- auto-fit endings from Scout: hold the last frame, end the voice at a word ----
+assert ss.check_ending({}) == (0.0, None)
+assert ss.check_ending({"end_hold": 0.4, "voice_cut_at": 12.35}) == (0.4, 12.35)
+for bad, words in [({"end_hold": 1.5}, "0-1 s"), ({"end_hold": -0.1}, "0-1 s"), ({"voice_cut_at": 0.2}, "after 0.5 s")]:
+    try:
+        ss.check_ending(bad); raise AssertionError("accepted " + str(bad))
+    except ValueError as e:
+        assert words in str(e), (words, str(e))
+src_ = open("scout_story.py").read()
+assert "tpad=stop_mode=clone:stop_duration=" in src_ and "afade=t=out:st=" in src_ and "atrim=0:{cut:.3f}" in src_
+assert "win_start = story_len - hold -" in src_                       # the hold comes after the win footage
+print("Scout auto-fit endings: PASS")
