@@ -324,11 +324,15 @@ def render_story_v2(job, get=fetch):
 # Captions follow the voice word by word (current word gold) in the caption area, never over the footage.
 # Music sits low under the voice and dips while the voice speaks; loudness levelled for social media.
 FRAMES = {
-    "9:16": {"W": 720, "H": 1280, "TOP": 150, "BAR": 96, "ZONE": 230, "series": 22, "title": 30, "bar": 21, "cap": 62, "line": 52, "cap_chars": 16, "tag": 36},
-    "4:5":  {"W": 720, "H": 900,  "TOP": 110, "BAR": 70, "ZONE": 170, "series": 18, "title": 24, "bar": 17, "cap": 50, "line": 42, "cap_chars": 20, "tag": 34},
+    "9:16": {"W": 720, "H": 1280, "TOP": 150, "BAR": 96, "ZONE": 230, "series": 22, "title": 30, "bar": 21, "cap": 62, "line": 52, "cap_chars": 16, "tag": 40, "tagbar_top": 1140},
+    "4:5":  {"W": 720, "H": 900,  "TOP": 110, "BAR": 70, "ZONE": 170, "series": 18, "title": 24, "bar": 17, "cap": 50, "line": 42, "cap_chars": 20, "tag": 32, "tagbar_top": 790},
 }
-# End tagline (from the series settings): gold, two lines at most, from TAG_SECONDS before the closing clip to the last frame.
-TAG_SECONDS, TAG_MAX, TAG_LINE_MAX = 2.5, 60, 30
+# End tagline (from the series settings), from TAG_SECONDS before the closing clip to the last frame: a solid navy bar
+# slides in from the left (BAR_SLIDE s), then the gold tagline rises from the bottom of the screen onto it (TAG_RISE s).
+# The bar sits below the spoken captions, over the bottom strip; the footage window and the captions are never touched.
+TAG_SECONDS, TAG_MAX, TAG_LINE_MAX = 3.0, 60, 30
+BAR_SLIDE, TAG_RISE, TAGBAR_SIDE, TAGBAR_BOTTOM = 0.6, 0.5, 16, 12
+NAVY_ASS = "&H00391210&"                       # #101239 in ASS colour order
 
 def tagline_lines(text):
     """None when there is no tagline; else 1-2 balanced lines, split after a sentence when possible. Refuses what won't fit."""
@@ -418,33 +422,25 @@ def caption_groups(words, max_chars):
         groups.append(cur)
     return groups
 
+def tagbar_box(g):
+    """(left, top, right, bottom) of the end-tagline bar: inside the edges, below the spoken captions."""
+    return TAGBAR_SIDE, g["tagbar_top"], g["W"] - TAGBAR_SIDE, g["H"] - TAGBAR_BOTTOM
+
 def captions_ass_v3(path, g, words, offset, hook="", payoff="", setup_end=0.0, win_start=0.0, story_len=0.0, video_len=0.0, tagline=None, tag_start=None):
     """words: [(start, end, text)] on the voice's own clock; shown on the video clock (offset added).
     Without a voice: hook over the setup, payoff over the win (story clock).
-    tagline: 1-2 lines in gold in the lower caption area from tag_start (video clock) to the end; the spoken
-    captions move to the upper caption area meanwhile, so the two never overlap."""
+    tagline (1-2 lines): from tag_start (video clock) to the end, the navy bar slides in, then the tagline rises onto it.
+    The spoken captions are written exactly as without a tagline."""
     cy = g["ZONE_Y"] + g["ZONE"] // 2
-    tag_h = int(len(tagline or []) * g["tag"] * 1.17)
-    cy_up = g["ZONE_Y"] + 12 + g["cap"] // 2                 # spoken captions while the tagline shows
-    cy_tag = g["ZONE_Y"] + g["ZONE"] - 10 - tag_h // 2        # tagline block, above the bottom bar
-    tag_at = tag_start if tagline else None
     lines = ["[Script Info]", "ScriptType: v4.00+", f"PlayResX: {g['W']}", f"PlayResY: {g['H']}", "WrapStyle: 2", "[V4+ Styles]",
              "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
              f"Style: Cap,{FONT_NAME},{g['cap']},&H00FFFFFF,&H00FFFFFF,&H00391210,&H00000000,-1,0,0,0,100,100,0,0,1,3,0,5,30,30,0,1",
-             f"Style: Line,{FONT_NAME},{g['line']},&H00FFFFFF,&H00FFFFFF,&H00391210,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,5,30,30,0,1",
-             f"Style: Tag,{FONT_NAME},{g['tag']},{GOLD_ASS},{GOLD_ASS},&H00391210,&H00000000,-1,0,0,0,100,100,0,0,1,3,0,5,30,30,0,1",
-             "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
+             f"Style: Line,{FONT_NAME},{g['line']},&H00FFFFFF,&H00FFFFFF,&H00391210,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,5,30,30,0,1"]
+    if tagline:
+        lines += [f"Style: TagBar,{FONT_NAME},20,{NAVY_ASS},{NAVY_ASS},{NAVY_ASS},&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1",
+                  f"Style: Tag,{FONT_NAME},{g['tag']},{GOLD_ASS},{GOLD_ASS},{NAVY_ASS},&H00000000,-1,0,0,0,100,100,0,0,1,2,0,5,0,0,0,1"]
+    lines += ["[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
     pos = f"{{\\pos({g['W'] // 2},{cy})}}"
-    up = f"{{\\pos({g['W'] // 2},{cy_up})}}"
-    def show(a, z, style, text, layer=0):
-        """one caption event; split at the tagline's start so it moves up instead of overlapping"""
-        if tag_at is None or z <= tag_at:
-            lines.append(f"Dialogue: {layer},{ass_time(a)},{ass_time(z)},{style},,0,0,0,,{pos}{text}")
-        elif a >= tag_at:
-            lines.append(f"Dialogue: {layer},{ass_time(a)},{ass_time(z)},{style},,0,0,0,,{up}{text}")
-        else:
-            lines.append(f"Dialogue: {layer},{ass_time(a)},{ass_time(tag_at)},{style},,0,0,0,,{pos}{text}")
-            lines.append(f"Dialogue: {layer},{ass_time(tag_at)},{ass_time(z)},{style},,0,0,0,,{up}{text}")
     if words:
         timed = [(a + offset, z + offset, w) for a, z, w in words]
         groups = caption_groups(timed, g.get("cap_chars", 16))
@@ -453,15 +449,22 @@ def captions_ass_v3(path, g, words, offset, hook="", payoff="", setup_end=0.0, w
             for k, (a, z, _) in enumerate(grp):
                 end = grp[k + 1][0] if k + 1 < len(grp) else (hold if hold - z < 1.0 else z + 0.3)
                 text = " ".join((f"{{\\c{GOLD_ASS}}}{ass_escape(w)}{{\\c&H00FFFFFF&}}" if j == k else ass_escape(w)) for j, (_, _, w) in enumerate(grp))
-                show(a, min(end, video_len), "Cap", text)
+                lines.append(f"Dialogue: 0,{ass_time(a)},{ass_time(min(end, video_len))},Cap,,0,0,0,,{pos}{text}")
     else:
         if hook:
             lines.append(f"Dialogue: 1,{ass_time(offset)},{ass_time(offset + setup_end)},Line,,0,0,0,,{pos}{ass_escape(hook).replace(chr(10), chr(92) + 'N')}")
         if payoff:
-            show(offset + win_start, offset + story_len, "Line", f"{{\\c{GOLD_ASS}}}{ass_escape(payoff).replace(chr(10), chr(92) + 'N')}", 1)
+            lines.append(f"Dialogue: 1,{ass_time(offset + win_start)},{ass_time(offset + story_len)},Line,,0,0,0,,{pos}{{\\c{GOLD_ASS}}}{ass_escape(payoff).replace(chr(10), chr(92) + 'N')}")
     if tagline:
+        x0, y0, x1, y1 = tagbar_box(g)
+        w, h = x1 - x0, y1 - y0
+        slide, rise = int(BAR_SLIDE * 1000), int((BAR_SLIDE + TAG_RISE) * 1000)
+        lines.append(f"Dialogue: 2,{ass_time(tag_start)},{ass_time(video_len)},TagBar,,0,0,0,,"
+                     f"{{\\an7\\move({x0 - w},{y0},{x0},{y0},0,{slide})\\p1}}m 0 0 l {w} 0 {w} {h} 0 {h}{{\\p0}}")
+        below = g["H"] + int(len(tagline) * g["tag"] * 0.6) + 4          # starts just below the bottom edge
         tag_text = "\\N".join(ass_escape(x) for x in tagline)
-        lines.append(f"Dialogue: 2,{ass_time(tag_at)},{ass_time(video_len)},Tag,,0,0,0,,{{\\pos({g['W'] // 2},{cy_tag})}}{tag_text}")
+        lines.append(f"Dialogue: 3,{ass_time(tag_start)},{ass_time(video_len)},Tag,,0,0,0,,"
+                     f"{{\\an5\\move({g['W'] // 2},{below},{g['W'] // 2},{(y0 + y1) // 2},{slide},{rise})}}{tag_text}")
     pathlib.Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 def render_story_v3(job, get=fetch):
