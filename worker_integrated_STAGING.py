@@ -8,6 +8,7 @@ from worker_v7_branded_preview_STAGING import branded_preview, download_signed
 from story_visual_sampler import frame_samples
 from worker_autonomous_private_STAGING import render_autonomous
 from scout_branded import scout_branded
+from scout_story import source_check as scout_source_check, render_story as scout_story
 
 def private_audio_mix(job):
     """Finish a previously rendered private video; preserve existing images and branding."""
@@ -135,6 +136,8 @@ class Handler(BaseHandler):
                 video=private_audio_mix(job)
             elif mode == "private_music_mix":
                 video=private_music_mix(job)
+            elif mode == "scout_source_check":
+                return self.answer(200, scout_source_check(job))
             elif mode == "inspect_original_frames_private":
                 sources=job.get("sources")
                 if not isinstance(sources,list) or not 1<=len(sources)<=3:
@@ -172,6 +175,8 @@ class Handler(BaseHandler):
                 video = branded_preview(job)
             elif mode == "scout_branded_short":
                 video = scout_branded(job)
+            elif mode == "scout_story_short":
+                video = scout_story(job)
             elif mode == "source_to_preview" and not job.get("editing_contract"):
                 video = render_existing(job)
             else:
