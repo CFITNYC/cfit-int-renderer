@@ -324,9 +324,30 @@ def render_story_v2(job, get=fetch):
 # Captions follow the voice word by word (current word gold) in the caption area, never over the footage.
 # Music sits low under the voice and dips while the voice speaks; loudness levelled for social media.
 FRAMES = {
-    "9:16": {"W": 720, "H": 1280, "TOP": 150, "BAR": 96, "ZONE": 230, "series": 22, "title": 30, "bar": 21, "cap": 62, "line": 52, "cap_chars": 16},
-    "4:5":  {"W": 720, "H": 900,  "TOP": 110, "BAR": 70, "ZONE": 170, "series": 18, "title": 24, "bar": 17, "cap": 50, "line": 42, "cap_chars": 20},
+    "9:16": {"W": 720, "H": 1280, "TOP": 150, "BAR": 96, "ZONE": 230, "series": 22, "title": 30, "bar": 21, "cap": 62, "line": 52, "cap_chars": 16, "tag": 36},
+    "4:5":  {"W": 720, "H": 900,  "TOP": 110, "BAR": 70, "ZONE": 170, "series": 18, "title": 24, "bar": 17, "cap": 50, "line": 42, "cap_chars": 20, "tag": 34},
 }
+# End tagline (from the series settings): gold, two lines at most, from TAG_SECONDS before the closing clip to the last frame.
+TAG_SECONDS, TAG_MAX, TAG_LINE_MAX = 2.5, 60, 30
+
+def tagline_lines(text):
+    """None when there is no tagline; else 1-2 balanced lines, split after a sentence when possible. Refuses what won't fit."""
+    if text is None or str(text).strip() == "":
+        return None
+    t = re.sub(r"\s+", " ", str(text)).strip()
+    if len(t) > TAG_MAX or not re.fullmatch(r"[A-Za-z0-9 .,!?'&-]+", t):
+        raise ValueError(f"End tagline must be 1-{TAG_MAX} plain characters")
+    if len(t) <= TAG_LINE_MAX:
+        return [t]
+    words = t.split(); best = None
+    for i in range(1, len(words)):
+        a, b = " ".join(words[:i]), " ".join(words[i:])
+        score = (max(len(a), len(b)) - (4 if a.endswith((".", "!", "?")) else 0), max(len(a), len(b)))
+        if best is None or score < best[0]:
+            best = (score, [a, b])
+    if max(len(x) for x in best[1]) > TAG_LINE_MAX:
+        raise ValueError("End tagline is too long for two lines")
+    return best[1]
 VERSION_LIMITS = {
     "short": ({"setup": (1.0, 4.0), "challenge": (2.0, 7.0), "win": (1.5, 5.0)}, 13.0),
     "long":  ({"setup": (2.0, 6.0), "challenge": (8.0, 20.0), "win": (4.0, 9.0)}, 32.0),
@@ -397,16 +418,33 @@ def caption_groups(words, max_chars):
         groups.append(cur)
     return groups
 
-def captions_ass_v3(path, g, words, offset, hook="", payoff="", setup_end=0.0, win_start=0.0, story_len=0.0, video_len=0.0):
+def captions_ass_v3(path, g, words, offset, hook="", payoff="", setup_end=0.0, win_start=0.0, story_len=0.0, video_len=0.0, tagline=None, tag_start=None):
     """words: [(start, end, text)] on the voice's own clock; shown on the video clock (offset added).
-    Without a voice: hook over the setup, payoff over the win (story clock)."""
+    Without a voice: hook over the setup, payoff over the win (story clock).
+    tagline: 1-2 lines in gold in the lower caption area from tag_start (video clock) to the end; the spoken
+    captions move to the upper caption area meanwhile, so the two never overlap."""
     cy = g["ZONE_Y"] + g["ZONE"] // 2
+    tag_h = int(len(tagline or []) * g["tag"] * 1.17)
+    cy_up = g["ZONE_Y"] + 12 + g["cap"] // 2                 # spoken captions while the tagline shows
+    cy_tag = g["ZONE_Y"] + g["ZONE"] - 10 - tag_h // 2        # tagline block, above the bottom bar
+    tag_at = tag_start if tagline else None
     lines = ["[Script Info]", "ScriptType: v4.00+", f"PlayResX: {g['W']}", f"PlayResY: {g['H']}", "WrapStyle: 2", "[V4+ Styles]",
              "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
              f"Style: Cap,{FONT_NAME},{g['cap']},&H00FFFFFF,&H00FFFFFF,&H00391210,&H00000000,-1,0,0,0,100,100,0,0,1,3,0,5,30,30,0,1",
              f"Style: Line,{FONT_NAME},{g['line']},&H00FFFFFF,&H00FFFFFF,&H00391210,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,5,30,30,0,1",
+             f"Style: Tag,{FONT_NAME},{g['tag']},{GOLD_ASS},{GOLD_ASS},&H00391210,&H00000000,-1,0,0,0,100,100,0,0,1,3,0,5,30,30,0,1",
              "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
     pos = f"{{\\pos({g['W'] // 2},{cy})}}"
+    up = f"{{\\pos({g['W'] // 2},{cy_up})}}"
+    def show(a, z, style, text, layer=0):
+        """one caption event; split at the tagline's start so it moves up instead of overlapping"""
+        if tag_at is None or z <= tag_at:
+            lines.append(f"Dialogue: {layer},{ass_time(a)},{ass_time(z)},{style},,0,0,0,,{pos}{text}")
+        elif a >= tag_at:
+            lines.append(f"Dialogue: {layer},{ass_time(a)},{ass_time(z)},{style},,0,0,0,,{up}{text}")
+        else:
+            lines.append(f"Dialogue: {layer},{ass_time(a)},{ass_time(tag_at)},{style},,0,0,0,,{pos}{text}")
+            lines.append(f"Dialogue: {layer},{ass_time(tag_at)},{ass_time(z)},{style},,0,0,0,,{up}{text}")
     if words:
         timed = [(a + offset, z + offset, w) for a, z, w in words]
         groups = caption_groups(timed, g.get("cap_chars", 16))
@@ -415,16 +453,20 @@ def captions_ass_v3(path, g, words, offset, hook="", payoff="", setup_end=0.0, w
             for k, (a, z, _) in enumerate(grp):
                 end = grp[k + 1][0] if k + 1 < len(grp) else (hold if hold - z < 1.0 else z + 0.3)
                 text = " ".join((f"{{\\c{GOLD_ASS}}}{ass_escape(w)}{{\\c&H00FFFFFF&}}" if j == k else ass_escape(w)) for j, (_, _, w) in enumerate(grp))
-                lines.append(f"Dialogue: 0,{ass_time(a)},{ass_time(min(end, video_len))},Cap,,0,0,0,,{pos}{text}")
+                show(a, min(end, video_len), "Cap", text)
     else:
         if hook:
             lines.append(f"Dialogue: 1,{ass_time(offset)},{ass_time(offset + setup_end)},Line,,0,0,0,,{pos}{ass_escape(hook).replace(chr(10), chr(92) + 'N')}")
         if payoff:
-            lines.append(f"Dialogue: 1,{ass_time(offset + win_start)},{ass_time(offset + story_len)},Line,,0,0,0,,{pos}{{\\c{GOLD_ASS}}}{ass_escape(payoff).replace(chr(10), chr(92) + 'N')}")
+            show(offset + win_start, offset + story_len, "Line", f"{{\\c{GOLD_ASS}}}{ass_escape(payoff).replace(chr(10), chr(92) + 'N')}", 1)
+    if tagline:
+        tag_text = "\\N".join(ass_escape(x) for x in tagline)
+        lines.append(f"Dialogue: 2,{ass_time(tag_at)},{ass_time(video_len)},Tag,,0,0,0,,{{\\pos({g['W'] // 2},{cy_tag})}}{tag_text}")
     pathlib.Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 def render_story_v3(job, get=fetch):
     version, segs, cuts, g = check_story_v3(job)
+    tagline = tagline_lines(job.get("end_tagline"))
     audio = job.get("audio") or {}
     b = job["branding"]
     with tempfile.TemporaryDirectory() as td:
@@ -453,7 +495,7 @@ def render_story_v3(job, get=fetch):
                             "bar": "CFIT METHOD  |  CREATIVE FITNESS NYC"}.items():
             (t / f"{name}.txt").write_text(value)
         captions_ass_v3(t / "captions.ass", g, words, offset, "" if words else wrap(clean(job.get("hook"), 40)), "" if words else wrap(clean(job.get("payoff"), 48)),
-                        setup_end, win_start, story_len, video_len)
+                        setup_end, win_start, story_len, video_len, tagline, opening_len + story_len - TAG_SECONDS)
         W, H, WIN, TOP, BAR, ZONE_Y = g["W"], g["H"], g["WIN"], g["TOP"], g["BAR"], g["ZONE_Y"]
         args = [FFMPEG, "-nostdin", "-hide_banner", "-v", "error", "-y", "-i", str(first)]
         for s, a, z in pieces:

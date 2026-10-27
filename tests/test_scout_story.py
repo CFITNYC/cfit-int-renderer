@@ -126,3 +126,54 @@ assert [" ".join(w for _, _, w in x) for x in ss.caption_groups(gw("Method bring
 assert all(len(" ".join(w for _, _, w in x)) <= 16 or len(x) == 1 for x in ss.caption_groups(gw("The CFIT Method brings mobility, stability, and functional strength together for athletes"), 16))
 assert ss.frame_geometry("9:16")["cap_chars"] == 16 and ss.frame_geometry("4:5")["cap_chars"] == 20
 print("Scout caption width: PASS")
+
+# ---- end tagline (from the series settings): gold, two lines, from 2.5 s before the closing clip to the last frame ----
+TAG = "Move Freely. Stay Grounded. Age Powerfully, my friends."
+assert ss.tagline_lines(TAG) == ["Move Freely. Stay Grounded.", "Age Powerfully, my friends."]
+assert ss.tagline_lines(None) is None and ss.tagline_lines("") is None and ss.tagline_lines("  ") is None
+assert ss.tagline_lines("Stay grounded.") == ["Stay grounded."]
+for bad, words in [("x" * 61, "1-60 plain"), ("Move {\\b1} freely", "1-60 plain"), ("Supercalifragilisticexpialidocious-and-even-longer words", "too long for two lines")]:
+    try:
+        ss.tagline_lines(bad); raise AssertionError("accepted tagline " + bad)
+    except ValueError as e:
+        assert words in str(e), (words, str(e))
+import re as _re
+def events(a):
+    out = []
+    for line in a.splitlines():
+        if line.startswith("Dialogue:"):
+            f = line.split(",", 9)
+            m = _re.search(r"\\pos\((\d+),(\d+)\)", f[9])
+            sec = lambda x: int(x.split(":")[0]) * 3600 + int(x.split(":")[1]) * 60 + float(x.split(":")[2])
+            out.append({"start": sec(f[1]), "end": sec(f[2]), "style": f[3], "x": int(m.group(1)), "y": int(m.group(2)), "text": f[9]})
+    return out
+for frame in ["9:16", "4:5"]:
+    g = ss.frame_geometry(frame)
+    with tempfile.TemporaryDirectory() as td:
+        p = pathlib.Path(td) / "t.ass"
+        words = [(i * 0.4, i * 0.4 + 0.35, w) for i, w in enumerate("Strong rotation starts from the ground and finishes with control every single time".split())]
+        # video: opening 0.7 + story 12.8 + closing 1.5 = 15.0 s; tagline from 0.7 + 12.8 - 2.5 = 11.0 s
+        ss.captions_ass_v3(p, g, words, 6.5, video_len=15.0, story_len=12.8, tagline=ss.tagline_lines(TAG), tag_start=11.0)
+        a = p.read_text(); ev = events(a)
+        tag = [e for e in ev if e["style"] == "Tag"]
+        assert len(tag) == 1 and tag[0]["start"] == 11.0 and tag[0]["end"] == 15.0, tag                       # option A: to the last frame
+        assert tag[0]["text"].endswith("Move Freely. Stay Grounded.\\NAge Powerfully, my friends."), tag[0]["text"]
+        assert "Style: Tag,DejaVu Sans,%d,&H0050BEF2&,&H0050BEF2&,&H00391210," % g["tag"] in a                      # gold text, navy outline
+        tag_top = tag[0]["y"] - int(2 * g["tag"] * 1.17) // 2
+        assert tag_top > g["ZONE_Y"] and tag[0]["y"] + int(2 * g["tag"] * 1.17) // 2 < g["H"] - g["BAR"]           # inside the caption area, above the bar
+        caps = [e for e in ev if e["style"] == "Cap"]
+        assert all(e["end"] <= 11.0 or e["start"] >= 11.0 for e in caps)                                         # split at the tagline's start
+        late, early = [e for e in caps if e["start"] >= 11.0], [e for e in caps if e["end"] <= 11.0]
+        assert late and early and all(e["y"] < tag_top - g["cap"] // 2 + 4 for e in late)                       # moved up, never overlapping
+        assert all(e["y"] == g["ZONE_Y"] + g["ZONE"] // 2 for e in early)                                         # unchanged before
+        # no tagline: exactly today's captions
+        ss.captions_ass_v3(p, g, words, 6.5, video_len=15.0, story_len=12.8)
+        b = p.read_text()
+        q = pathlib.Path(td) / "old.ass"
+        ss.captions_ass_v3(q, g, words, 6.5, "", "", 0.0, 0.0, 12.8, 15.0)
+        assert "Tag,," not in b and b.replace("\n", "") and b == q.read_text()
+        # without a voice: the gold payoff stops where the tagline starts
+        ss.captions_ass_v3(p, g, [], 0.7, "", "Grounded first.", 4.0, 8.3, 12.8, 15.0, ss.tagline_lines(TAG), 11.0)
+        pay = [e for e in events(p.read_text()) if e["style"] == "Line"]
+        assert any(e["end"] == 11.0 for e in pay) and all(e["y"] < tag_top for e in pay if e["start"] >= 11.0)
+print("Scout end tagline: PASS")
