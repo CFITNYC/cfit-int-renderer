@@ -324,25 +324,39 @@ def render_story_v2(job, get=fetch):
 # Captions follow the voice word by word (current word gold) in the caption area, never over the footage.
 # Music sits low under the voice and dips while the voice speaks; loudness levelled for social media.
 FRAMES = {
-    "9:16": {"W": 720, "H": 1280, "TOP": 150, "BAR": 96, "ZONE": 230, "series": 22, "title": 30, "bar": 21, "cap": 62, "line": 52, "cap_chars": 16, "tag": 40, "tagbar_top": 1140},
-    "4:5":  {"W": 720, "H": 900,  "TOP": 110, "BAR": 70, "ZONE": 170, "series": 18, "title": 24, "bar": 17, "cap": 50, "line": 42, "cap_chars": 20, "tag": 32, "tagbar_top": 790},
+    "9:16": {"W": 720, "H": 1280, "TOP": 150, "BAR": 96, "ZONE": 230, "series": 22, "title": 30, "bar": 21, "cap": 62, "line": 52, "cap_chars": 16, "tag": 46, "tagbar_top": 1140},
+    "4:5":  {"W": 720, "H": 900,  "TOP": 110, "BAR": 70, "ZONE": 170, "series": 18, "title": 24, "bar": 17, "cap": 50, "line": 42, "cap_chars": 20, "tag": 46, "tagbar_top": 778},
 }
-# End tagline (from the series settings), from TAG_SECONDS before the closing clip to the last frame: a solid navy bar
-# slides in from the left (BAR_SLIDE s), then the gold tagline rises from the bottom of the screen onto it (TAG_RISE s).
-# The bar sits below the spoken captions, over the bottom strip; the footage window and the captions are never touched.
+# End tagline (from the series settings), from TAG_SECONDS before the closing clip to the last frame: a full-width bar in
+# the caption-panel navy with a thin gold top line slides in from the left (BAR_SLIDE s), then the tagline fades in
+# (TAG_RISE s): the first word of each phrase in gold, the rest white. Below the spoken captions; the footage window is untouched.
 TAG_SECONDS, TAG_MAX, TAG_LINE_MAX = 3.0, 60, 30
-BAR_SLIDE, TAG_RISE, TAGBAR_SIDE, TAGBAR_BOTTOM = 0.6, 0.5, 16, 12
+BAR_SLIDE, TAG_RISE, TAGBAR_SIDE, TAGBAR_BOTTOM = 0.6, 0.5, 0, 0      # full width, to the bottom (like the caption panel)
 NAVY_ASS = "&H00391210&"                       # #101239 in ASS colour order
+PANEL_ASS = "&H00260D0B&"                      # #0B0D26, the caption panel navy
+# Upright footage is widened (thin soft blurred edges) only when the whole body still fits: the Long window is wide and
+# short, so it gets a moderate zoom. Each clip is checked; a clip framed too tightly keeps today's width.
+SIDE_EDGE, LONG_SIDE_EDGE = 18, 140            # Short: about 684 px wide; Long (4:5): about 440 px wide
+BODY_HEAD_MARGIN, BODY_FEET_MARGIN = 0.03, 0.15   # room kept above the highest and below the lowest movement (planted feet don't move)
+BODY_MIN_MOTION = 1.5                          # too little movement to tell where the body is: keep today's width
+GOLD_LINE = 2                                  # the thin gold line (main post and tagline bar)
 
 def tagline_lines(text):
     """None when there is no tagline; else 1-2 balanced lines, split after a sentence when possible. Refuses what won't fit."""
     if text is None or str(text).strip() == "":
         return None
     t = re.sub(r"\s+", " ", str(text)).strip()
-    if len(t) > TAG_MAX or not re.fullmatch(r"[A-Za-z0-9 .,!?'&-]+", t):
+    if len(t) > TAG_MAX or not re.fullmatch(r"[A-Za-z0-9 .,!?'&|-]+", t):
         raise ValueError(f"End tagline must be 1-{TAG_MAX} plain characters")
     if len(t) <= TAG_LINE_MAX:
         return [t]
+    if "|" in t:
+        parts = [x.strip() for x in t.split("|")]
+        best = min(range(1, len(parts)), key=lambda i: max(len(" | ".join(parts[:i])), len(" | ".join(parts[i:]))))
+        lines = [" | ".join(parts[:best]), " | ".join(parts[best:])]
+        if max(len(x) for x in lines) > TAG_LINE_MAX:
+            raise ValueError("End tagline is too long for two lines")
+        return lines
     words = t.split(); best = None
     for i in range(1, len(words)):
         a, b = " ".join(words[:i]), " ".join(words[i:])
@@ -422,6 +436,38 @@ def caption_groups(words, max_chars):
         groups.append(cur)
     return groups
 
+def movement_rows(path, spans, w=36, h=64, fps=3):
+    """(top, bottom) of where things move across the used parts of a clip, as fractions of its height; None if unclear."""
+    energy, pairs = [0.0] * h, 0
+    for a, z in spans:
+        frames = gray_frames(path, a, z - a, fps=fps, w=w, h=h)
+        for p, q in zip(frames, frames[1:]):
+            pairs += 1
+            for r in range(h):
+                energy[r] += sum(abs(x - y) for x, y in zip(p[r * w:(r + 1) * w], q[r * w:(r + 1) * w]))
+    if not pairs:
+        return None
+    energy = [e / pairs / w for e in energy]
+    peak = max(energy)
+    rows = [r for r, e in enumerate(energy) if e >= max(peak * 0.2, 1.0)]
+    if peak < BODY_MIN_MOTION or not rows:
+        return None
+    return rows[0] / h, (rows[-1] + 1) / h
+
+def widen_fits(rows, sw, sh, W, WIN, edge):
+    """True when widening upright footage to W - 2*edge keeps the moving body, with margins, inside the window."""
+    if rows is None:
+        return False
+    scaled_h = (W - 2 * edge) * sh / sw
+    if scaled_h <= WIN:
+        return True
+    keep = WIN / scaled_h
+    return rows[0] - BODY_HEAD_MARGIN >= (1 - keep) / 2 and rows[1] + BODY_FEET_MARGIN <= (1 + keep) / 2
+
+def no_final_period(text):
+    """On-screen text only: drop the final period(s); question and exclamation marks stay."""
+    return re.sub(r"\.+$", "", text) if text else text
+
 def tagbar_box(g):
     """(left, top, right, bottom) of the end-tagline bar: inside the edges, below the spoken captions."""
     return TAGBAR_SIDE, g["tagbar_top"], g["W"] - TAGBAR_SIDE, g["H"] - TAGBAR_BOTTOM
@@ -432,13 +478,14 @@ def captions_ass_v3(path, g, words, offset, hook="", payoff="", setup_end=0.0, w
     tagline (1-2 lines): from tag_start (video clock) to the end, the navy bar slides in, then the tagline rises onto it.
     The spoken captions are written exactly as without a tagline."""
     cy = g["ZONE_Y"] + g["ZONE"] // 2
+    hook, payoff = no_final_period(hook), no_final_period(payoff)
     lines = ["[Script Info]", "ScriptType: v4.00+", f"PlayResX: {g['W']}", f"PlayResY: {g['H']}", "WrapStyle: 2", "[V4+ Styles]",
              "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
              f"Style: Cap,{FONT_NAME},{g['cap']},&H00FFFFFF,&H00FFFFFF,&H00391210,&H00000000,-1,0,0,0,100,100,0,0,1,3,0,5,30,30,0,1",
              f"Style: Line,{FONT_NAME},{g['line']},&H00FFFFFF,&H00FFFFFF,&H00391210,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,5,30,30,0,1"]
     if tagline:
-        lines += [f"Style: TagBar,{FONT_NAME},20,{NAVY_ASS},{NAVY_ASS},{NAVY_ASS},&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1",
-                  f"Style: Tag,{FONT_NAME},{g['tag']},{GOLD_ASS},{GOLD_ASS},{NAVY_ASS},&H00000000,-1,0,0,0,100,100,0,0,1,2,0,5,0,0,0,1"]
+        lines += [f"Style: TagBar,{FONT_NAME},20,{PANEL_ASS},{PANEL_ASS},{PANEL_ASS},&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1",
+                  f"Style: Tag,{FONT_NAME},{g['tag']},&H00FFFFFF,&H00FFFFFF,{PANEL_ASS},&H80000000,-1,0,0,0,100,100,0,0,1,1,2,5,0,0,0,1"]
     lines += ["[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
     pos = f"{{\\pos({g['W'] // 2},{cy})}}"
     if words:
@@ -448,7 +495,8 @@ def captions_ass_v3(path, g, words, offset, hook="", payoff="", setup_end=0.0, w
             hold = groups[gi + 1][0][0] if gi + 1 < len(groups) else video_len
             for k, (a, z, _) in enumerate(grp):
                 end = grp[k + 1][0] if k + 1 < len(grp) else (hold if hold - z < 1.0 else z + 0.3)
-                text = " ".join((f"{{\\c{GOLD_ASS}}}{ass_escape(w)}{{\\c&H00FFFFFF&}}" if j == k else ass_escape(w)) for j, (_, _, w) in enumerate(grp))
+                shown = [w if j < len(grp) - 1 else no_final_period(w) for j, (_, _, w) in enumerate(grp)]
+                text = " ".join((f"{{\\c{GOLD_ASS}}}{ass_escape(w)}{{\\c&H00FFFFFF&}}" if j == k else ass_escape(w)) for j, w in enumerate(shown))
                 lines.append(f"Dialogue: 0,{ass_time(a)},{ass_time(min(end, video_len))},Cap,,0,0,0,,{pos}{text}")
     else:
         if hook:
@@ -458,13 +506,21 @@ def captions_ass_v3(path, g, words, offset, hook="", payoff="", setup_end=0.0, w
     if tagline:
         x0, y0, x1, y1 = tagbar_box(g)
         w, h = x1 - x0, y1 - y0
-        slide, rise = int(BAR_SLIDE * 1000), int((BAR_SLIDE + TAG_RISE) * 1000)
-        lines.append(f"Dialogue: 2,{ass_time(tag_start)},{ass_time(video_len)},TagBar,,0,0,0,,"
-                     f"{{\\an7\\move({x0 - w},{y0},{x0},{y0},0,{slide})\\p1}}m 0 0 l {w} 0 {w} {h} 0 {h}{{\\p0}}")
-        below = g["H"] + int(len(tagline) * g["tag"] * 0.6) + 4          # starts just below the bottom edge
-        tag_text = "\\N".join(ass_escape(x) for x in tagline)
-        lines.append(f"Dialogue: 3,{ass_time(tag_start)},{ass_time(video_len)},Tag,,0,0,0,,"
-                     f"{{\\an5\\move({g['W'] // 2},{below},{g['W'] // 2},{(y0 + y1) // 2},{slide},{rise})}}{tag_text}")
+        slide, fade_end = int(BAR_SLIDE * 1000), int((BAR_SLIDE + TAG_RISE) * 1000)
+        mv = lambda y: f"\\an7\\move({x0 - w},{y},{x0},{y},0,{slide})"
+        sh = 14 if g["H"] > 1000 else 6                                   # soft shadow above the bar, so it lifts off the footage
+        lines.append(f"Dialogue: 2,{ass_time(tag_start)},{ass_time(video_len)},TagBar,,0,0,0,,{{{mv(y0 - sh // 2)}\\1c&H000000&\\1a&H70&\\blur{sh // 2}\\p1}}m 0 0 l {w} 0 {w} {sh} 0 {sh}{{\\p0}}")
+        lines.append(f"Dialogue: 3,{ass_time(tag_start)},{ass_time(video_len)},TagBar,,0,0,0,,{{{mv(y0)}\\p1}}m 0 0 l {w} 0 {w} {h} 0 {h}{{\\p0}}")
+        lines.append(f"Dialogue: 4,{ass_time(tag_start)},{ass_time(video_len)},TagBar,,0,0,0,,{{{mv(y0)}\\1c{GOLD_ASS}\\p1}}m 0 0 l {w} 0 {w} {GOLD_LINE} 0 {GOLD_LINE}{{\\p0}}")
+        def paint(line):   # the first word of each phrase in gold, everything else (pipes too) white
+            out, first = [], True
+            for w in line.split(" "):
+                out.append(f"{{\\c{GOLD_ASS}}}{ass_escape(w)}{{\\c&H00FFFFFF&}}" if first and w != "|" else ass_escape(w))
+                first = (w == "|")
+            return " ".join(out)
+        tag_text = "\\N".join(paint(x) for x in tagline)
+        lines.append(f"Dialogue: 5,{ass_time(tag_start)},{ass_time(video_len)},Tag,,0,0,0,,"
+                     f"{{\\an5\\pos({g['W'] // 2},{(y0 + GOLD_LINE + y1) // 2})\\alpha&HFF&\\t({slide},{fade_end},\\alpha&H00&)}}{tag_text}")
     pathlib.Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 def render_story_v3(job, get=fetch):
@@ -508,17 +564,26 @@ def render_story_v3(job, get=fetch):
         colour = "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv"
         tag = f"{colour},setsar=1,fps={FPS},format=yuv420p"
         fit = f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=0x0B0D26,{tag}"
-        def win(idx, sw, sh, label):
+        edge = SIDE_EDGE if H > 1000 else LONG_SIDE_EDGE   # the Long window is wide and short: a moderate zoom keeps the whole body
+        wide = {}                                          # per clip: widen only when the whole body still fits, else today's width
+        for url, path in srcs.items():
+            sw0, sh0 = video_size(path)
+            wide[url] = sw0 / sh0 >= 0.9 or widen_fits(movement_rows(path, [(a, z) for s, a, z in pieces if s["signed_url"] == url]), sw0, sh0, W, WIN, edge)
+        def win(idx, sw, sh, label, url=None):
+            if sw / sh < 0.9 and not wide.get(url, False):   # today's fit: the whole picture, wider blurred sides
+                return (f"[{idx}:v]split[{label}a][{label}b];[{label}a]scale={W}:{WIN}:force_original_aspect_ratio=increase,crop={W}:{WIN},gblur=sigma=28,eq=brightness=-0.12[{label}bg];"
+                        f"[{label}b]scale={W}:{WIN}:force_original_aspect_ratio=decrease[{label}fg];[{label}bg][{label}fg]overlay=(W-w)/2:(H-h)/2,{tag}[{label}]")
             if sw / sh >= 0.9:
                 return f"[{idx}:v]scale={W}:{WIN}:force_original_aspect_ratio=increase,crop={W}:{WIN},{tag}[{label}]"
             return (f"[{idx}:v]split[{label}a][{label}b];[{label}a]scale={W}:{WIN}:force_original_aspect_ratio=increase,crop={W}:{WIN},gblur=sigma=28,eq=brightness=-0.12[{label}bg];"
-                    f"[{label}b]scale={W}:{WIN}:force_original_aspect_ratio=decrease[{label}fg];[{label}bg][{label}fg]overlay=(W-w)/2:(H-h)/2,{tag}[{label}]")
-        windows = ";".join(win(i + 1, *video_size(srcs[s["signed_url"]]), f"w{i}") for i, (s, _, _) in enumerate(pieces))
+                    f"[{label}b]scale={W - 2 * edge}:{WIN}:force_original_aspect_ratio=increase,crop={W - 2 * edge}:{WIN}[{label}fg];[{label}bg][{label}fg]overlay=(W-w)/2:(H-h)/2,{tag}[{label}]")
+        windows = ";".join(win(i + 1, *video_size(srcs[s["signed_url"]]), f"w{i}", s["signed_url"]) for i, (s, _, _) in enumerate(pieces))
         story = (f"{windows};{''.join(f'[w{i}]' for i in range(n))}concat=n={n}:v=1:a=0,pad={W}:{H}:0:{TOP}:color=0x0B0D26,{tag},"
                  f"drawbox=x=0:y=0:w=iw:h={TOP}:color=0x101239@1:t=fill,"
                  f"drawtext=fontfile='{FONT}':textfile='{t / 'series.txt'}':fontsize={g['series']}:fontcolor=0xF2BE50:x=(w-text_w)/2:y={int(TOP * 0.22)},"
                  f"drawtext=fontfile='{FONT}':textfile='{t / 'title.txt'}':fontsize={g['title']}:fontcolor=white:x=(w-text_w)/2:y={int(TOP * 0.52)},"
-                 f"drawbox=x=0:y={ZONE_Y}:w=iw:h=3:color=0xF2BE50@0.85:t=fill,"
+                 + "".join(f"drawbox=x=0:y={TOP + 2 * i}:w=iw:h=2:color=black@{0.42 - 0.07 * i:.2f}:t=fill," for i in range(6)) +   # soft shadow under the header
+                 f"drawbox=x=0:y={ZONE_Y - 1}:w=iw:h=1:color=0xF2BE50@0.35:t=fill,drawbox=x=0:y={ZONE_Y}:w=iw:h={GOLD_LINE}:color=0xF2BE50@1:t=fill,"
                  f"drawbox=x=0:y=ih-{BAR}:w=iw:h={BAR}:color=black@0.85:t=fill,"
                  f"drawtext=fontfile='{FONT}':textfile='{t / 'bar.txt'}':fontsize={g['bar']}:fontcolor=white:x=(w-text_w)/2:y=h-{int(BAR * 0.65)}[mid]")
         graph = f"[0:v]{fit}[a];{story};[{n + 1}:v]{fit}[c];[a][mid][c]concat=n=3:v=1:a=0,subtitles='{t / 'captions.ass'}'[v]"

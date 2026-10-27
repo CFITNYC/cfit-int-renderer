@@ -127,12 +127,14 @@ assert all(len(" ".join(w for _, _, w in x)) <= 16 or len(x) == 1 for x in ss.ca
 assert ss.frame_geometry("9:16")["cap_chars"] == 16 and ss.frame_geometry("4:5")["cap_chars"] == 20
 print("Scout caption width: PASS")
 
-# ---- end tagline: a navy bar slides in from the left, then the gold tagline rises onto it; spoken captions untouched ----
-TAG = "Move Freely. Stay Grounded. Age Powerfully, my friends."
-assert ss.tagline_lines(TAG) == ["Move Freely. Stay Grounded.", "Age Powerfully, my friends."]
-assert ss.tagline_lines(None) is None and ss.tagline_lines("") is None and ss.tagline_lines("  ") is None
-assert ss.tagline_lines("Stay grounded.") == ["Stay grounded."]
-for bad, words in [("x" * 61, "1-60 plain"), ("Move {\\b1} freely", "1-60 plain"), ("Supercalifragilisticexpialidocious-and-even-longer words", "too long for two lines")]:
+# ---- end tagline: full-width panel-navy bar with a thin gold line slides in, then the tagline fades in ----
+TAG = "Move Freely | Stay Grounded | Age Powerfully, my friends"
+OLD = "Move Freely. Stay Grounded. Age Powerfully, my friends."
+assert ss.tagline_lines(TAG) == ["Move Freely | Stay Grounded", "Age Powerfully, my friends"]      # break at the middle pipe, not shown
+assert ss.tagline_lines(OLD) == ["Move Freely. Stay Grounded.", "Age Powerfully, my friends."]   # the old text still works
+assert ss.tagline_lines(None) is None and ss.tagline_lines("") is None and ss.tagline_lines("Stay grounded") == ["Stay grounded"]
+for bad, words in [("x" * 61, "1-60 plain"), ("Move {\\b1} freely", "1-60 plain"), ("Supercalifragilisticexpialidocious-and-even-longer words", "too long for two lines"),
+                   ("Supercalifragilisticexpialidocious-even | longer", "too long for two lines")]:
     try:
         ss.tagline_lines(bad); raise AssertionError("accepted tagline " + bad)
     except ValueError as e:
@@ -142,37 +144,52 @@ sec = lambda x: int(x.split(":")[0]) * 3600 + int(x.split(":")[1]) * 60 + float(
 def events(a):
     return [dict(zip(["layer", "start", "end", "style", "text"], [int(f[0][10:]), sec(f[1]), sec(f[2]), f[3], f[9]]))
             for f in (line.split(",", 9) for line in a.splitlines() if line.startswith("Dialogue:"))]
-assert ss.TAG_SECONDS == 3.0 and ss.BAR_SLIDE == 0.6 and ss.TAG_RISE == 0.5
+assert ss.TAG_SECONDS == 3.0 and ss.BAR_SLIDE == 0.6 and ss.TAG_RISE == 0.5 and ss.GOLD_LINE == 2 and ss.PANEL_ASS == "&H00260D0B&"
+GOLD = "{\\c&H0050BEF2&}"; WHITE = "{\\c&H00FFFFFF&}"
 for frame in ["9:16", "4:5"]:
     g = ss.frame_geometry(frame)
+    assert g["tag"] == 46
     x0, y0, x1, y1 = ss.tagbar_box(g)
-    assert x0 == 16 and x1 == g["W"] - 16 and y1 == g["H"] - 12                                    # inside the edges
-    assert y0 > g["ZONE_Y"] + g["ZONE"] // 2 + g["cap"] // 2 + 3 + 10                               # below the spoken captions
-    assert y0 > g["TOP"] + g["WIN"]                                                                  # never over the footage window
+    assert (x0, x1, y1) == (0, g["W"], g["H"])                                                       # full width, to the bottom
+    assert y0 > g["ZONE_Y"] + g["ZONE"] // 2 + g["cap"] // 2                                         # below the spoken captions
+    assert y0 > g["TOP"] + g["WIN"]                                                                   # never over the footage window
     with tempfile.TemporaryDirectory() as td:
         p, q = pathlib.Path(td) / "t.ass", pathlib.Path(td) / "n.ass"
-        words = [(i * 0.4, i * 0.4 + 0.35, w) for i, w in enumerate("Strong rotation starts from the ground and finishes with control every single time".split())]
-        # video: opening 0.7 + story 12.8 + closing 1.5 = 15.0 s; tagline from 0.7 + 12.8 - 3.0 = 10.5 s
+        words = [(i * 0.4, i * 0.4 + 0.35, w) for i, w in enumerate("Strong rotation starts from the ground. Ready? Train it with control.".split())]
         ss.captions_ass_v3(p, g, words, 6.5, video_len=15.0, story_len=12.8, tagline=ss.tagline_lines(TAG), tag_start=10.5)
         ss.captions_ass_v3(q, g, words, 6.5, video_len=15.0, story_len=12.8)
-        a, n = p.read_text(), q.read_text()
-        ev, ev0 = events(a), events(n)
-        assert [e for e in ev if e["style"] == "Cap"] == [e for e in ev0 if e["style"] == "Cap"]     # spoken captions identical
-        assert "TagBar" not in n and "Style: Tag," not in n                                          # no tagline: today's file
+        a, n = p.read_text(), q.read_text(); ev, ev0 = events(a), events(n)
+        caps = [e for e in ev if e["style"] == "Cap"]
+        assert caps == [e for e in ev0 if e["style"] == "Cap"] and "TagBar" not in n and "Style: Tag," not in n   # captions identical; no tagline = no bar
         bar = [e for e in ev if e["style"] == "TagBar"]; tag = [e for e in ev if e["style"] == "Tag"]
-        assert len(bar) == 1 and len(tag) == 1 and bar[0]["start"] == tag[0]["start"] == 10.5 and bar[0]["end"] == tag[0]["end"] == 15.0
+        assert len(bar) == 3 and len(tag) == 1 and all(e["start"] == 10.5 and e["end"] == 15.0 for e in bar + tag)
         w, h = x1 - x0, y1 - y0
-        assert bar[0]["text"] == f"{{\\an7\\move({x0 - w},{y0},{x0},{y0},0,600)\\p1}}m 0 0 l {w} 0 {w} {h} 0 {h}{{\\p0}}", bar[0]["text"]   # off-screen left -> in place in 0.6 s
-        assert f"Style: TagBar,DejaVu Sans,20,{ss.NAVY_ASS},{ss.NAVY_ASS}," in a and ss.NAVY_ASS == "&H00391210&"                      # solid navy
-        m = _re.match(r"\{\\an5\\move\((\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\)\}(.*)", tag[0]["text"])
-        assert m, tag[0]["text"]
-        xa, ya, xb, yb, t1, t2 = map(int, m.groups()[:6])
-        assert xa == xb == g["W"] // 2 and ya > g["H"] and yb == (y0 + y1) // 2 and (t1, t2) == (600, 1100)                         # rises from below the screen after the bar arrives
-        assert m.group(7) == "Move Freely. Stay Grounded.\\NAge Powerfully, my friends."
-        assert f"Style: Tag,DejaVu Sans,{g['tag']},&H0050BEF2&,&H0050BEF2&," in a                                                    # gold
-        assert bar[0]["layer"] < tag[0]["layer"]                                                                                      # text on top of the bar
-        # without a voice: hook and payoff exactly as before
-        ss.captions_ass_v3(p, g, [], 0.7, "Watch.", "Grounded first.", 4.0, 8.3, 12.8, 15.0, ss.tagline_lines(TAG), 10.5)
-        ss.captions_ass_v3(q, g, [], 0.7, "Watch.", "Grounded first.", 4.0, 8.3, 12.8, 15.0)
-        assert [e for e in events(p.read_text()) if e["style"] == "Line"] == [e for e in events(q.read_text()) if e["style"] == "Line"]
-print("Scout end tagline (sliding bar): PASS")
+        shadow, panel, line = sorted(bar, key=lambda e: e["layer"])
+        assert panel["text"] == f"{{\\an7\\move({x0 - w},{y0},{x0},{y0},0,600)\\p1}}m 0 0 l {w} 0 {w} {h} 0 {h}{{\\p0}}"      # slides in from the left in 0.6 s
+        assert "\\1c&H0050BEF2&" in line["text"] and f"l {w} 0 {w} 2 0 2" in line["text"] and f"move({x0 - w},{y0}," in line["text"]   # thin gold top line, moves with it
+        assert "\\1a&H70&" in shadow["text"] and "\\blur" in shadow["text"] and shadow["layer"] < panel["layer"] < line["layer"] < tag[0]["layer"]
+        assert f"Style: TagBar,DejaVu Sans,20,&H00260D0B&," in a and f"Style: Tag,DejaVu Sans,46,&H00FFFFFF,&H00FFFFFF,&H00260D0B&," in a        # panel navy; white text by default
+        t = tag[0]["text"]
+        assert f"\\pos({g['W'] // 2},{(y0 + 2 + y1) // 2})" in t and "\\alpha&HFF&\\t(600,1100,\\alpha&H00&)" in t           # centred, fades in after the slide
+        assert t.endswith(f"{GOLD}Move{WHITE} Freely | {GOLD}Stay{WHITE} Grounded\\N{GOLD}Age{WHITE} Powerfully, my friends"), t   # Move, Stay, Age gold; rest white
+        # no final period on screen: "ground." and "control." lose it, "Ready?" keeps its mark; timing unchanged
+        shown = " ".join(_re.sub(r"\{[^}]*\}", "", e["text"]) for e in caps)
+        assert "ground. Ready?" in shown and "control." not in shown and shown.endswith("control")   # mid-caption period stays; final one goes; "?" stays
+        assert [(e["start"], e["end"]) for e in caps] == [(e["start"], e["end"]) for e in ev0 if e["style"] == "Cap"]
+        ss.captions_ass_v3(p, g, [], 0.7, "Can you stay grounded?", "Grounded first. Rise with control.", 4.0, 8.3, 12.8, 15.0)
+        lines_ = [_re.sub(r"\{[^}]*\}", "", e["text"]) for e in events(p.read_text()) if e["style"] == "Line"]
+        assert lines_ == ["Can you stay grounded?", "Grounded first. Rise with control"], lines_
+assert ss.no_final_period("Stay grounded...") == "Stay grounded" and ss.no_final_period("Why?") == "Why?" and ss.no_final_period("") == ""
+print("Scout end tagline (design polish): PASS")
+
+# ---- wider footage only when the whole body still fits; otherwise today's width ----
+real = (0.219, 0.656)    # where things move in your hip-thrust clip (measured)
+assert ss.widen_fits(real, 1080, 1920, 720, 804, ss.SIDE_EDGE) is True            # Short: 684 px wide, whole body
+assert ss.widen_fits(real, 1080, 1920, 720, 550, ss.LONG_SIDE_EDGE) is True       # Long: about 440 px wide, whole body
+assert ss.widen_fits(real, 1080, 1920, 720, 550, ss.SIDE_EDGE) is False           # the old thin edge on the Long would cut the body: refused
+assert ss.widen_fits((0.05, 0.95), 1080, 1920, 720, 804, ss.SIDE_EDGE) is False   # framed too tightly: keep today's width
+assert ss.widen_fits((0.20, 0.75), 1080, 1920, 720, 804, ss.SIDE_EDGE) is False   # feet too close to the bottom: keep today's width
+assert ss.widen_fits(None, 1080, 1920, 720, 804, ss.SIDE_EDGE) is False           # unclear: keep today's width
+src = open("scout_story.py").read()
+assert '"-an", "-c:v", "libx264"' in src and 'mix += ["-filter_complex", f, "-map", "0:v", "-map", "[a]"' in src   # sound: picture built silent; only voice + music mixed
+print("Scout whole-body fit + sound lock: PASS")
