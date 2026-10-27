@@ -206,3 +206,43 @@ src_ = open("scout_story.py").read()
 assert "tpad=stop_mode=clone:stop_duration=" in src_ and "afade=t=out:st=" in src_ and "atrim=0:{cut:.3f}" in src_
 assert "win_start = story_len - hold -" in src_                       # the hold comes after the win footage
 print("Scout auto-fit endings: PASS")
+
+# ---- three-line end tagline: line 1 above, the tagline on one line, line 3 pops on and holds still ----
+assert ss.tagline_extra(None) is None and ss.tagline_extra("  ") is None
+assert ss.tagline_extra("Train with Purpose") == "Train with Purpose" and ss.tagline_extra("- THAT'S CFIT METHOD -") == "- THAT'S CFIT METHOD -"
+for bad in ["x" * 31, "Train {\\b1}"]:
+    try:
+        ss.tagline_extra(bad); raise AssertionError("accepted " + bad)
+    except ValueError as e:
+        assert "1-30 plain" in str(e)
+MID = "Move Freely | Stay Grounded | Age Powerfully"
+assert ss.tagline_single(MID) == MID
+try:
+    ss.tagline_single("Move Freely | Stay Grounded | Age Powerfully, my friends"); raise AssertionError("accepted a too-long one-line tagline")
+except ValueError as e:
+    assert "fit one line" in str(e)
+for frame in ["9:16", "4:5"]:
+    g = ss.frame_geometry(frame); t3 = g["t3"]
+    assert t3["l2"] == 28 and t3["top"] > g["ZONE_Y"] + g["ZONE"] // 2 + g["cap"] // 2 + 3   # line 2 at 28 px; bar below the spoken captions
+    with tempfile.TemporaryDirectory() as td:
+        p, q = pathlib.Path(td) / "a.ass", pathlib.Path(td) / "b.ass"
+        words = [(i * 0.4, i * 0.4 + 0.35, w) for i, w in enumerate("Strong hips start from the ground and finish with control".split())]
+        ss.captions_ass_v3(p, g, words, 0.0, video_len=15.0, story_len=12.8, tagline=[MID], tag_start=10.5, tag_top="Train with Purpose", tag_bottom="- THAT'S CFIT METHOD -")
+        ss.captions_ass_v3(q, g, words, 0.0, video_len=15.0, story_len=12.8)
+        ev, ev0 = events(p.read_text()), events(q.read_text())
+        assert [e for e in ev if e["style"] == "Cap"] == [e for e in ev0 if e["style"] == "Cap"]          # spoken captions untouched
+        tags = [e for e in ev if e["style"] == "Tag"]
+        assert len(tags) == 3 and all(e["start"] == 10.5 and e["end"] == 15.0 for e in tags)               # one copy each, to the last frame
+        l1, l2, l3 = tags
+        assert f"\\pos({g['W'] // 2},{t3['y'][0]})\\fs{t3['l1']}\\fsp3" in l1["text"] and l1["text"].endswith("Train with Purpose")
+        assert f"\\fs{t3['l2']}" in l2["text"] and l2["text"].endswith(f"{GOLD}Move{WHITE} Freely | {GOLD}Stay{WHITE} Grounded | {GOLD}Age{WHITE} Powerfully")
+        assert f"\\pos({g['W'] // 2},{t3['y'][2]})" in l3["text"] and "\\move" not in l3["text"] and "\\c&H0050BEF2&" in l3["text"]   # still, gold
+        assert "\\fscx70\\fscy70\\alpha&HFF&\\t(1100,1350,\\fscx100\\fscy100\\alpha&H00&)" in l3["text"]   # pops on after lines 1-2 fade in
+        assert l3["text"].endswith("- THAT'S CFIT METHOD -")
+        bar = [e for e in ev if e["style"] == "TagBar"]
+        assert len(bar) == 3 and all(f",{t3['top']},0," in b_["text"] or f",{t3['top'] - 7}," in b_["text"] or f",{t3['top'] - 3}," in b_["text"] for b_ in bar)
+        # no lines 1 and 3: today's two-line look exactly
+        ss.captions_ass_v3(p, g, words, 0.0, video_len=15.0, story_len=12.8, tagline=ss.tagline_lines(MID), tag_start=10.5)
+        two = [e for e in events(p.read_text()) if e["style"] == "Tag"]
+        assert len(two) == 1 and "\\N" in two[0]["text"]
+print("Scout three-line tagline: PASS")

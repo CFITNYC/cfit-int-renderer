@@ -324,8 +324,10 @@ def render_story_v2(job, get=fetch):
 # Captions follow the voice word by word (current word gold) in the caption area, never over the footage.
 # Music sits low under the voice and dips while the voice speaks; loudness levelled for social media.
 FRAMES = {
-    "9:16": {"W": 720, "H": 1280, "TOP": 150, "BAR": 96, "ZONE": 230, "series": 22, "title": 30, "bar": 21, "cap": 62, "line": 52, "cap_chars": 16, "tag": 46, "tagbar_top": 1140},
-    "4:5":  {"W": 720, "H": 900,  "TOP": 110, "BAR": 70, "ZONE": 170, "series": 18, "title": 24, "bar": 17, "cap": 50, "line": 42, "cap_chars": 20, "tag": 46, "tagbar_top": 778},
+    "9:16": {"W": 720, "H": 1280, "TOP": 150, "BAR": 96, "ZONE": 230, "series": 22, "title": 30, "bar": 21, "cap": 62, "line": 52, "cap_chars": 16, "tag": 46, "tagbar_top": 1140,
+             "t3": {"top": 1116, "l1": 30, "l2": 28, "l3": 28, "y": (1146, 1190, 1236)}},
+    "4:5":  {"W": 720, "H": 900,  "TOP": 110, "BAR": 70, "ZONE": 170, "series": 18, "title": 24, "bar": 17, "cap": 50, "line": 42, "cap_chars": 20, "tag": 46, "tagbar_top": 778,
+             "t3": {"top": 782, "l1": 22, "l2": 28, "l3": 22, "y": (806, 841, 876)}},
 }
 # End tagline (from the series settings), from TAG_SECONDS before the closing clip to the last frame: a full-width bar in
 # the caption-panel navy with a thin gold top line slides in from the left (BAR_SLIDE s), then the tagline fades in
@@ -468,11 +470,34 @@ def no_final_period(text):
     """On-screen text only: drop the final period(s); question and exclamation marks stay."""
     return re.sub(r"\.+$", "", text) if text else text
 
-def tagbar_box(g):
+def tagbar_box(g, three=False):
     """(left, top, right, bottom) of the end-tagline bar: inside the edges, below the spoken captions."""
-    return TAGBAR_SIDE, g["tagbar_top"], g["W"] - TAGBAR_SIDE, g["H"] - TAGBAR_BOTTOM
+    return TAGBAR_SIDE, (g["t3"]["top"] if three else g["tagbar_top"]), g["W"] - TAGBAR_SIDE, g["H"] - TAGBAR_BOTTOM
 
-def captions_ass_v3(path, g, words, offset, hook="", payoff="", setup_end=0.0, win_start=0.0, story_len=0.0, video_len=0.0, tagline=None, tag_start=None):
+# Three-line end tagline (from the series settings): line 1 above the tagline, the tagline on one line, line 3 below.
+# Line 1 and the tagline fade in after the bar slides in; line 3 pops on (TAG3_POP s) and holds still to the last frame.
+TAG3_LINE_MAX, TAG3_MID_MAX, TAG3_POP = 30, 46, 0.25
+
+def tagline_extra(text):
+    """Line 1 or line 3: None when empty; plain text up to TAG3_LINE_MAX characters."""
+    if text is None or str(text).strip() == "":
+        return None
+    t = re.sub(r"\s+", " ", str(text)).strip()
+    if len(t) > TAG3_LINE_MAX or not re.fullmatch(r"[A-Za-z0-9 .,!?'&|-]+", t):
+        raise ValueError(f"Tagline top and bottom lines must be 1-{TAG3_LINE_MAX} plain characters")
+    return t
+
+def tagline_single(text):
+    """The tagline on one line (three-line layout)."""
+    if tagline_lines(text) is None:   # same character rules as the two-line tagline
+        return None
+    t = re.sub(r"\s+", " ", str(text)).strip()
+    if len(t) > TAG3_MID_MAX:
+        raise ValueError(f"With a top or bottom line the tagline must fit one line ({TAG3_MID_MAX} characters)")
+    return t
+
+def captions_ass_v3(path, g, words, offset, hook="", payoff="", setup_end=0.0, win_start=0.0, story_len=0.0, video_len=0.0, tagline=None, tag_start=None,
+                    tag_top=None, tag_bottom=None):
     """words: [(start, end, text)] on the voice's own clock; shown on the video clock (offset added).
     Without a voice: hook over the setup, payoff over the win (story clock).
     tagline (1-2 lines): from tag_start (video clock) to the end, the navy bar slides in, then the tagline rises onto it.
@@ -503,8 +528,9 @@ def captions_ass_v3(path, g, words, offset, hook="", payoff="", setup_end=0.0, w
             lines.append(f"Dialogue: 1,{ass_time(offset)},{ass_time(offset + setup_end)},Line,,0,0,0,,{pos}{ass_escape(hook).replace(chr(10), chr(92) + 'N')}")
         if payoff:
             lines.append(f"Dialogue: 1,{ass_time(offset + win_start)},{ass_time(offset + story_len)},Line,,0,0,0,,{pos}{{\\c{GOLD_ASS}}}{ass_escape(payoff).replace(chr(10), chr(92) + 'N')}")
+    three = bool(tagline) and bool(tag_top or tag_bottom)
     if tagline:
-        x0, y0, x1, y1 = tagbar_box(g)
+        x0, y0, x1, y1 = tagbar_box(g, three)
         w, h = x1 - x0, y1 - y0
         slide, fade_end = int(BAR_SLIDE * 1000), int((BAR_SLIDE + TAG_RISE) * 1000)
         mv = lambda y: f"\\an7\\move({x0 - w},{y},{x0},{y},0,{slide})"
@@ -518,9 +544,23 @@ def captions_ass_v3(path, g, words, offset, hook="", payoff="", setup_end=0.0, w
                 out.append(f"{{\\c{GOLD_ASS}}}{ass_escape(w)}{{\\c&H00FFFFFF&}}" if first and w != "|" else ass_escape(w))
                 first = (w == "|")
             return " ".join(out)
-        tag_text = "\\N".join(paint(x) for x in tagline)
-        lines.append(f"Dialogue: 5,{ass_time(tag_start)},{ass_time(video_len)},Tag,,0,0,0,,"
-                     f"{{\\an5\\pos({g['W'] // 2},{(y0 + GOLD_LINE + y1) // 2})\\alpha&HFF&\\t({slide},{fade_end},\\alpha&H00&)}}{tag_text}")
+        fade = f"\\alpha&HFF&\\t({slide},{fade_end},\\alpha&H00&)"
+        if not three:
+            tag_text = "\\N".join(paint(x) for x in tagline)
+            lines.append(f"Dialogue: 5,{ass_time(tag_start)},{ass_time(video_len)},Tag,,0,0,0,,"
+                         f"{{\\an5\\pos({g['W'] // 2},{(y0 + GOLD_LINE + y1) // 2}){fade}}}{tag_text}")
+        else:
+            t3, cx = g["t3"], g["W"] // 2
+            if tag_top:      # line 1: white, letter-spaced
+                lines.append(f"Dialogue: 5,{ass_time(tag_start)},{ass_time(video_len)},Tag,,0,0,0,,"
+                             f"{{\\an5\\pos({cx},{t3['y'][0]})\\fs{t3['l1']}\\fsp3{fade}}}{ass_escape(tag_top)}")
+            lines.append(f"Dialogue: 5,{ass_time(tag_start)},{ass_time(video_len)},Tag,,0,0,0,,"
+                         f"{{\\an5\\pos({cx},{t3['y'][1]})\\fs{t3['l2']}{fade}}}{paint(' '.join(tagline))}")
+            if tag_bottom:   # line 3: gold, letter-spaced; pops on after the others and holds still to the end
+                pop = int((BAR_SLIDE + TAG_RISE + TAG3_POP) * 1000)
+                lines.append(f"Dialogue: 6,{ass_time(tag_start)},{ass_time(video_len)},Tag,,0,0,0,,"
+                             f"{{\\an5\\pos({cx},{t3['y'][2]})\\fs{t3['l3']}\\fsp4\\c{GOLD_ASS}\\fscx70\\fscy70\\alpha&HFF&"
+                             f"\\t({fade_end},{pop},\\fscx100\\fscy100\\alpha&H00&)}}{ass_escape(tag_bottom)}")
     pathlib.Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 END_HOLD_MAX, CUT_FADE = 1.0, 0.2   # Scout auto-fit: hold the last frame (s); soft fade when the voice is ended at a word
@@ -540,7 +580,10 @@ def check_ending(job):
 def render_story_v3(job, get=fetch):
     version, segs, cuts, g = check_story_v3(job)
     hold, cut = check_ending(job)
+    tag_top, tag_bottom = tagline_extra(job.get("end_tagline_top")), tagline_extra(job.get("end_tagline_bottom"))
     tagline = tagline_lines(job.get("end_tagline"))
+    if tagline and (tag_top or tag_bottom):   # three-line layout: the tagline on one line between them
+        tagline = [tagline_single(job.get("end_tagline"))]
     audio = job.get("audio") or {}
     b = job["branding"]
     with tempfile.TemporaryDirectory() as td:
@@ -571,7 +614,8 @@ def render_story_v3(job, get=fetch):
                             "bar": "CFIT METHOD  |  CREATIVE FITNESS NYC"}.items():
             (t / f"{name}.txt").write_text(value)
         captions_ass_v3(t / "captions.ass", g, words, offset, "" if words else wrap(clean(job.get("hook"), 40)), "" if words else wrap(clean(job.get("payoff"), 48)),
-                        setup_end, win_start, story_len, video_len, tagline, opening_len + story_len - TAG_SECONDS)
+                        setup_end, win_start, story_len, video_len, tagline, opening_len + story_len - TAG_SECONDS,
+                        tag_top if tagline else None, tag_bottom if tagline else None)
         W, H, WIN, TOP, BAR, ZONE_Y = g["W"], g["H"], g["WIN"], g["TOP"], g["BAR"], g["ZONE_Y"]
         args = [FFMPEG, "-nostdin", "-hide_banner", "-v", "error", "-y", "-i", str(first)]
         for s, a, z in pieces:
