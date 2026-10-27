@@ -194,6 +194,41 @@ src = open("scout_story.py").read()
 assert '"-an", "-c:v", "libx264"' in src and 'mix += ["-filter_complex", f, "-map", "0:v", "-map", "[a]"' in src   # sound: picture built silent; only voice + music mixed
 print("Scout whole-body fit + sound lock: PASS")
 
+# ---- as large as the whole movement allows (body_fit), Shorts and Longs ----
+def old_width(rows, sw, sh, W, WIN, edge):       # what the renderer showed before body_fit
+    return W - 2 * edge if ss.widen_fits(rows, sw, sh, W, WIN, edge) else round(WIN * sw / sh)
+for WIN, edge in ((804, ss.SIDE_EDGE), (550, ss.LONG_SIDE_EDGE), (804, ss.LONG_SIDE_EDGE)):
+    for top in (0.02, 0.05, 0.1, 0.2, 0.3):
+        for bottom in (0.5, 0.6, 0.7, 0.8, 0.9):
+            for cols in (None, (0.2, 0.8), (0.0, 1.0)):
+                vw, vh, cx, cy, dw, dh = ss.body_fit((top, bottom), cols, 1080, 1920, 720, WIN)
+                assert dw >= old_width((top, bottom), 1080, 1920, 720, WIN, edge) - 2, (top, bottom, WIN)   # upright clips never smaller than before
+                assert dw <= 720 and dh <= WIN and dw % 2 == 0 and dh % 2 == 0
+                y0, y1 = max(0, top - ss.BODY_HEAD_MARGIN) * vh, min(1, bottom + ss.BODY_FEET_MARGIN) * vh
+                if y1 - y0 <= WIN:                                                                        # the whole movement (with margins) is in view
+                    assert cy <= y0 + 1 and cy + dh >= y1 - 1, (top, bottom, WIN)
+# wide clip (your Bench Bird Dog, measured): background may go, the movement never does
+for WIN in (804, 550):
+    rows, cols = (0.0625, 0.6875), (0.0, 0.75)
+    vw, vh, cx, cy, dw, dh = ss.body_fit(rows, cols, 1920, 1080, 720, WIN)
+    x0, x1 = 0, (cols[1] + ss.SIDE_MARGIN) * vw
+    y0, y1 = (rows[0] - ss.BODY_HEAD_MARGIN) * vh, min(1, rows[1] + ss.BODY_FEET_MARGIN) * vh
+    assert cx <= x0 + 1 and cx + dw >= x1 - 1 and cy <= y0 + 1 and cy + dh >= y1 - 1
+    assert dh > round(720 * 1080 / 1920)                     # larger than simply fitting the whole wide picture
+# a still clip (movement unclear): the whole picture with blurred edges, never a guess
+assert "if f is None:" in src and "fits[url] = body_fit(rows, movement_cols(path, spans), sw0, sh0, W, WIN) if rows else None" in src
+# the free video check also reports the clip's size (so Scout can prefer upright clips)
+stub = {"duration": lambda p: 10.0, "gray_frames": lambda *a, **k: [], "best_match": lambda a, b: 0.0, "hard_cuts": lambda p, d: [],
+        "motion_profile": lambda p, d: ([1.0], [0.5]), "video_size": lambda p: (1080, 1920)}
+saved = {k: getattr(ss, k) for k in stub}
+for k, v in stub.items(): setattr(ss, k, v)
+try:
+    r = ss.source_check(check, get=lambda u, d, audio=False: None)
+finally:
+    for k, v in saved.items(): setattr(ss, k, v)
+assert r["width"] == 1080 and r["height"] == 1920 and r["publishing_enabled"] is False
+print("Scout as large as the movement allows + clip size: PASS")
+
 # ---- auto-fit endings from Scout: hold the last frame, end the voice at a word ----
 assert ss.check_ending({}) == (0.0, None)
 assert ss.check_ending({"end_hold": 0.4, "voice_cut_at": 12.35}) == (0.4, 12.35)

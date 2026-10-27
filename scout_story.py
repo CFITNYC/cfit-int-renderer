@@ -115,7 +115,8 @@ def source_check(job, get=fetch):
         if len(cuts) >= CUTS_FLAG:
             reasons.append(f"{len(cuts)} hard cuts, so it was already edited")
         motion, luma = motion_profile(src, dur)
-        return {"status": "SOURCE_CHECKED", "publishing_enabled": False, "duration": round(dur, 2), "fps": 2,
+        width, height = video_size(src)
+        return {"status": "SOURCE_CHECKED", "publishing_enabled": False, "duration": round(dur, 2), "fps": 2, "width": width, "height": height,
                 "motion": motion, "luma": luma, "opening_match": opening_match, "closing_match": closing_match,
                 "cuts": cuts, "finished_edit": bool(reasons), "reasons": reasons}
 
@@ -336,8 +337,8 @@ TAG_SECONDS, TAG_MAX, TAG_LINE_MAX = 3.0, 60, 30
 BAR_SLIDE, TAG_RISE, TAGBAR_SIDE, TAGBAR_BOTTOM = 0.6, 0.5, 0, 0      # full width, to the bottom (like the caption panel)
 NAVY_ASS = "&H00391210&"                       # #101239 in ASS colour order
 PANEL_ASS = "&H00260D0B&"                      # #0B0D26, the caption panel navy
-# Upright footage is widened (thin soft blurred edges) only when the whole body still fits: the Long window is wide and
-# short, so it gets a moderate zoom. Each clip is checked; a clip framed too tightly keeps today's width.
+# Each clip is shown as large as the whole movement allows (body_fit): upright clips grow until the body reaches the top
+# and bottom of the window, wide clips may lose background but never the movement. widen_fits is kept for reference.
 SIDE_EDGE, LONG_SIDE_EDGE = 18, 140            # Short: about 684 px wide; Long (4:5): about 440 px wide
 BODY_HEAD_MARGIN, BODY_FEET_MARGIN = 0.03, 0.15   # room kept above the highest and below the lowest movement (planted feet don't move)
 BODY_MIN_MOTION = 1.5                          # too little movement to tell where the body is: keep today's width
@@ -455,6 +456,38 @@ def movement_rows(path, spans, w=36, h=64, fps=3):
     if peak < BODY_MIN_MOTION or not rows:
         return None
     return rows[0] / h, (rows[-1] + 1) / h
+
+SIDE_MARGIN = 0.06                              # room kept left and right of the movement (hands, feet, equipment)
+
+def movement_cols(path, spans, w=64, h=36, fps=3):
+    """(left, right) of where things move across the used parts of a clip, as fractions of its width; None if unclear."""
+    energy, pairs = [0.0] * w, 0
+    for a, z in spans:
+        frames = gray_frames(path, a, z - a, fps=fps, w=w, h=h)
+        for p, q in zip(frames, frames[1:]):
+            pairs += 1
+            for r in range(h):
+                for c in range(w):
+                    energy[c] += abs(p[r * w + c] - q[r * w + c])
+    if not pairs:
+        return None
+    energy = [e / pairs / h for e in energy]
+    peak = max(energy)
+    cols = [c for c, e in enumerate(energy) if e >= max(peak * 0.2, 1.0)]
+    if peak < BODY_MIN_MOTION or not cols:
+        return None
+    return cols[0] / w, (cols[-1] + 1) / w
+
+def body_fit(rows, cols, sw, sh, W, WIN):
+    """As large as possible while the whole movement (with margins) stays in the window: (scaled w, scaled h, crop x, crop y, shown w, shown h)."""
+    y0, y1 = max(0.0, rows[0] - BODY_HEAD_MARGIN), min(1.0, rows[1] + BODY_FEET_MARGIN)
+    x0, x1 = (max(0.0, cols[0] - SIDE_MARGIN), min(1.0, cols[1] + SIDE_MARGIN)) if cols else (0.0, 1.0)
+    s = min(W / ((x1 - x0) * sw), WIN / ((y1 - y0) * sh), max(W / sw, WIN / sh))   # never more zoom than filling the window
+    vw, vh = round(sw * s / 2) * 2, round(sh * s / 2) * 2
+    dw, dh = min(W, vw), min(WIN, vh)
+    cx = min(max((x0 + x1) / 2 * vw - dw / 2, 0), vw - dw)
+    cy = min(max((y0 + y1) / 2 * vh - dh / 2, 0), vh - dh)
+    return vw, vh, int(cx), int(cy), dw, dh
 
 def widen_fits(rows, sw, sh, W, WIN, edge):
     """True when widening upright footage to W - 2*edge keeps the moving body, with margins, inside the window."""
@@ -625,19 +658,20 @@ def render_story_v3(job, get=fetch):
         colour = "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv"
         tag = f"{colour},setsar=1,fps={FPS},format=yuv420p"
         fit = f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=0x0B0D26,{tag}"
-        edge = SIDE_EDGE if H > 1000 else LONG_SIDE_EDGE   # the Long window is wide and short: a moderate zoom keeps the whole body
-        wide = {}                                          # per clip: widen only when the whole body still fits, else today's width
+        fits = {}                                          # per clip: the largest size that keeps the whole movement in view
         for url, path in srcs.items():
             sw0, sh0 = video_size(path)
-            wide[url] = sw0 / sh0 >= 0.9 or widen_fits(movement_rows(path, [(a, z) for s, a, z in pieces if s["signed_url"] == url]), sw0, sh0, W, WIN, edge)
+            spans = [(a, z) for s, a, z in pieces if s["signed_url"] == url]
+            rows = movement_rows(path, spans)
+            fits[url] = body_fit(rows, movement_cols(path, spans), sw0, sh0, W, WIN) if rows else None
         def win(idx, sw, sh, label, url=None):
-            if sw / sh < 0.9 and not wide.get(url, False):   # today's fit: the whole picture, wider blurred sides
+            f = fits.get(url)
+            if f is None:                                  # movement unclear: the whole picture, blurred edges
                 return (f"[{idx}:v]split[{label}a][{label}b];[{label}a]scale={W}:{WIN}:force_original_aspect_ratio=increase,crop={W}:{WIN},gblur=sigma=28,eq=brightness=-0.12[{label}bg];"
                         f"[{label}b]scale={W}:{WIN}:force_original_aspect_ratio=decrease[{label}fg];[{label}bg][{label}fg]overlay=(W-w)/2:(H-h)/2,{tag}[{label}]")
-            if sw / sh >= 0.9:
-                return f"[{idx}:v]scale={W}:{WIN}:force_original_aspect_ratio=increase,crop={W}:{WIN},{tag}[{label}]"
+            vw, vh, cx, cy, dw, dh = f
             return (f"[{idx}:v]split[{label}a][{label}b];[{label}a]scale={W}:{WIN}:force_original_aspect_ratio=increase,crop={W}:{WIN},gblur=sigma=28,eq=brightness=-0.12[{label}bg];"
-                    f"[{label}b]scale={W - 2 * edge}:{WIN}:force_original_aspect_ratio=increase,crop={W - 2 * edge}:{WIN}[{label}fg];[{label}bg][{label}fg]overlay=(W-w)/2:(H-h)/2,{tag}[{label}]")
+                    f"[{label}b]scale={vw}:{vh},crop={dw}:{dh}:{cx}:{cy}[{label}fg];[{label}bg][{label}fg]overlay=(W-w)/2:(H-h)/2,{tag}[{label}]")
         windows = ";".join(win(i + 1, *video_size(srcs[s["signed_url"]]), f"w{i}", s["signed_url"]) for i, (s, _, _) in enumerate(pieces))
         held = f"tpad=stop_mode=clone:stop_duration={hold:.2f}," if hold > 0 else ""
         story = (f"{windows};{''.join(f'[w{i}]' for i in range(n))}concat=n={n}:v=1:a=0,{held}pad={W}:{H}:0:{TOP}:color=0x0B0D26,{tag},"
