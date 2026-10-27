@@ -42,3 +42,33 @@ assert ss.wrap("Grounded first. Then you rise.") == "Grounded first.\nThen you r
 assert ss.wrap("Short line") == "Short line"
 assert ss.BRAND_MATCH == 0.55 and ss.CUTS_FLAG == 3 and ss.MAX_STORY_SECONDS == 13.0
 print("Scout story + source check: PASS")
+
+# ---- layout v2 (2026-10-27): footage window + caption area, nothing drawn on the footage ----
+import tempfile, pathlib
+assert ss.V2_TOP + ss.V2_WIN + ss.V2_ZONE + ss.V2_BAR == 1280 and ss.V2_WIN == 804 and ss.V2_ZONE_Y == 954
+tag = "fps=30"
+wide, tall = ss.window_filter(1, 1920, 1080, "w0", tag), ss.window_filter(1, 540, 960, "w0", tag)
+assert "crop=720:804" in wide and "gblur" not in wide                          # wide: fill the window
+assert "force_original_aspect_ratio=decrease" in tall and "gblur" in tall       # tall: whole clip shown, blurred sides
+assert ss.check_words([], 10) == []
+assert ss.check_words([{"start": 0.2, "end": 0.5, "text": "Watch"}], 10) == [(0.2, 0.5, "Watch")]
+for bad, words in [([{"start": 9.5, "end": 11, "text": "late"}], "outside the story"), ([{"start": 0, "end": 0.1, "text": "x"}] * 141, "at most 140")]:
+    try:
+        ss.check_words(bad, 10); raise AssertionError("accepted bad words")
+    except ValueError as e:
+        assert words in str(e)
+with tempfile.TemporaryDirectory() as td:
+    p = pathlib.Path(td) / "c.ass"
+    ss.captions_ass(p, 10.0, "Watch the\nbase first.", "Grounded first.", 2.0, 7.0)
+    a = p.read_text()
+    assert "\\pos(360,1069)" in a and "Watch the\\Nbase first." in a and ss.GOLD_ASS + "}Grounded first." in a
+    assert a.count("Dialogue:") == 2 and "0:00:00.00,0:00:02.00" in a and "0:00:07.00,0:00:10.00" in a
+    ss.captions_ass(p, 10.0, "", "", 2.0, 7.0, [(0.2, 0.5, "Watch"), (0.6, 0.9, "the"), (1.0, 1.3, "base"), (1.8, 2.1, "first.")])
+    a = p.read_text()
+    assert a.count("Dialogue:") == 4 and "Grounded" not in a                    # with a voice: words only, no hook/payoff
+    assert "{\\c" + ss.GOLD_ASS + "}Watch{\\c&H00FFFFFF&} the base" in a          # the word being spoken is gold
+    assert "0:00:01.00,0:00:01.80" in a                                          # "base" holds through the short pause until "first."
+calls = []
+ss.render_story_v2 = lambda job, get=None: calls.append(job["layout"]) or b"v2"
+assert ss.render_story({**story, "layout": "v2"}) == b"v2" and calls == ["v2"]
+print("Scout layout v2: PASS")
