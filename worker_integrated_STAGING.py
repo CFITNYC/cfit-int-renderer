@@ -7,6 +7,7 @@ from worker import Handler as BaseHandler, render as render_existing
 from worker_v7_branded_preview_STAGING import branded_preview, download_signed
 from story_visual_sampler import frame_samples
 from worker_autonomous_private_STAGING import render_autonomous
+from scout_branded import scout_branded
 
 def private_audio_mix(job):
     """Finish a previously rendered private video; preserve existing images and branding."""
@@ -169,6 +170,8 @@ class Handler(BaseHandler):
                 video = render_autonomous(job)
             elif mode == "cfit_branded_preview_staging":
                 video = branded_preview(job)
+            elif mode == "scout_branded_short":
+                video = scout_branded(job)
             elif mode == "source_to_preview" and not job.get("editing_contract"):
                 video = render_existing(job)
             else:

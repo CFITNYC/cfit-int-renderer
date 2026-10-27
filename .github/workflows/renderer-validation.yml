@@ -9,7 +9,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check Python syntax
-        run: python3 -m py_compile worker.py rep_cycles_staging.py worker_v6_repetition_detection_STAGING.py worker_v7_branded_preview_STAGING.py worker_integrated_STAGING.py
+        run: python3 -m py_compile worker.py rep_cycles_staging.py worker_v6_repetition_detection_STAGING.py worker_v7_branded_preview_STAGING.py worker_integrated_STAGING.py scout_branded.py
+      - name: Scout branded short safety tests
+        run: PYTHONPATH=. python3 tests/test_scout_branded.py
       - name: Check private platform duration gate
         run: |
           python3 - <<'PY'
