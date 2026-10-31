@@ -232,6 +232,8 @@ def text_filter(textfile, size, color, start, end):
             f"x=(w-text_w)/2:y=h*0.30:line_spacing=10:box=1:boxcolor=black@0.55:boxborderw=18:enable='between(t,{start:.2f},{end:.2f})'")
 
 def render_story(job, get=fetch):
+    if job.get("layout") == "full":       # 2026-10-31: full-screen 9:16 Short, framing checked (Nick's rules)
+        return render_story_v3(job, get, full=True)
     if job.get("layout") == "v3":
         return render_story_v3(job, get)
     if job.get("layout") == "v2":
@@ -336,11 +338,13 @@ FRAMES = {
 TAG_SECONDS, TAG_MAX, TAG_LINE_MAX = 3.0, 60, 30
 BAR_SLIDE, TAG_RISE, TAGBAR_SIDE, TAGBAR_BOTTOM = 0.6, 0.5, 0, 0      # full width, to the bottom (like the caption panel)
 NAVY_ASS = "&H00391210&"                       # #101239 in ASS colour order
+BOX_ASS = "&H73331110&"                        # #101133 at about 55% (see-through caption box, full-screen Shorts)
 PANEL_ASS = "&H00260D0B&"                      # #0B0D26, the caption panel navy
 # Each clip is shown as large as the whole movement allows (body_fit): upright clips grow until the body reaches the top
 # and bottom of the window, wide clips may lose background but never the movement. widen_fits is kept for reference.
 SIDE_EDGE, LONG_SIDE_EDGE = 18, 140            # Short: about 684 px wide; Long (4:5): about 440 px wide
-BODY_HEAD_MARGIN, BODY_FEET_MARGIN = 0.03, 0.15   # room kept above the highest and below the lowest movement (planted feet don't move)
+BODY_HEAD_MARGIN, BODY_FEET_MARGIN = 0.06, 0.15   # 2026-10-31: more head room (Nick: never crop around part of the movement)
+BODY_LEVEL = 0.10                              # movement counts at 10% of the strongest (was 20%: missed slower parts)
 BODY_MIN_MOTION = 1.5                          # too little movement to tell where the body is: keep today's width
 GOLD_LINE = 2                                  # the thin gold line (main post and tagline bar)
 
@@ -452,7 +456,7 @@ def movement_rows(path, spans, w=36, h=64, fps=3):
         return None
     energy = [e / pairs / w for e in energy]
     peak = max(energy)
-    rows = [r for r, e in enumerate(energy) if e >= max(peak * 0.2, 1.0)]
+    rows = [r for r, e in enumerate(energy) if e >= max(peak * BODY_LEVEL, 1.0)]
     if peak < BODY_MIN_MOTION or not rows:
         return None
     return rows[0] / h, (rows[-1] + 1) / h
@@ -473,7 +477,7 @@ def movement_cols(path, spans, w=64, h=36, fps=3):
         return None
     energy = [e / pairs / h for e in energy]
     peak = max(energy)
-    cols = [c for c, e in enumerate(energy) if e >= max(peak * 0.2, 1.0)]
+    cols = [c for c, e in enumerate(energy) if e >= max(peak * BODY_LEVEL, 1.0)]
     if peak < BODY_MIN_MOTION or not cols:
         return None
     return cols[0] / w, (cols[-1] + 1) / w
@@ -530,25 +534,34 @@ def tagline_single(text):
     return t
 
 def captions_ass_v3(path, g, words, offset, hook="", payoff="", setup_end=0.0, win_start=0.0, story_len=0.0, video_len=0.0, tagline=None, tag_start=None,
-                    tag_top=None, tag_bottom=None):
+                    tag_top=None, tag_bottom=None, cap=None):
     """words: [(start, end, text)] on the voice's own clock; shown on the video clock (offset added).
     Without a voice: hook over the setup, payoff over the win (story clock).
     tagline (1-2 lines): from tag_start (video clock) to the end, the navy bar slides in, then the tagline rises onto it.
     The spoken captions are written exactly as without a tagline."""
     cy = g["ZONE_Y"] + g["ZONE"] // 2
     hook, payoff = no_final_period(hook), no_final_period(payoff)
+    # cap (full-screen Shorts, 2026-10-31): {"rect": (x0, y0, x1, y1), "font": px, "chars": n}: the words sit in a small
+    # see-through navy box placed clear of the person; nothing else about the captions changes.
+    cap_font, line_font, cap_box = g["cap"], g["line"], "1,3,0"
+    if cap:
+        x0, y0, x1, y1 = cap["rect"]
+        cap_font = line_font = int(cap["font"])
+        cap_box = "3,8,0"                                    # BorderStyle 3: a box behind the words (see-through navy)
     lines = ["[Script Info]", "ScriptType: v4.00+", f"PlayResX: {g['W']}", f"PlayResY: {g['H']}", "WrapStyle: 2", "[V4+ Styles]",
              "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-             f"Style: Cap,{FONT_NAME},{g['cap']},&H00FFFFFF,&H00FFFFFF,&H00391210,&H00000000,-1,0,0,0,100,100,0,0,1,3,0,5,30,30,0,1",
-             f"Style: Line,{FONT_NAME},{g['line']},&H00FFFFFF,&H00FFFFFF,&H00391210,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,5,30,30,0,1"]
+             f"Style: Cap,{FONT_NAME},{cap_font},&H00FFFFFF,&H00FFFFFF,{BOX_ASS if cap else '&H00391210&'},{BOX_ASS if cap else '&H00000000'},-1,0,0,0,100,100,0,0,{cap_box},5,30,30,0,1",
+             f"Style: Line,{FONT_NAME},{line_font},&H00FFFFFF,&H00FFFFFF,{BOX_ASS if cap else '&H00391210&'},{BOX_ASS if cap else '&H00000000'},-1,0,0,0,100,100,0,0,{'3,8,0' if cap else '1,0,0'},5,30,30,0,1"]
     if tagline:
         lines += [f"Style: TagBar,{FONT_NAME},20,{PANEL_ASS},{PANEL_ASS},{PANEL_ASS},&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1",
                   f"Style: Tag,{FONT_NAME},{g['tag']},&H00FFFFFF,&H00FFFFFF,{PANEL_ASS},&H80000000,-1,0,0,0,100,100,0,0,1,1,2,5,0,0,0,1"]
     lines += ["[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
     pos = f"{{\\pos({g['W'] // 2},{cy})}}"
+    if cap:
+        pos = f"{{\\an5\\pos({(x0 + x1) // 2},{(y0 + y1) // 2})}}"
     if words:
         timed = [(a + offset, z + offset, w) for a, z, w in words]
-        groups = caption_groups(timed, g.get("cap_chars", 16))
+        groups = caption_groups(timed, int(cap["chars"]) if cap else g.get("cap_chars", 16))
         for gi, grp in enumerate(groups):
             hold = groups[gi + 1][0][0] if gi + 1 < len(groups) else video_len
             for k, (a, z, _) in enumerate(grp):
@@ -610,7 +623,25 @@ def check_ending(job):
             raise ValueError("Voice cut must be after 0.5 s")
     return round(hold, 2), cut
 
-def render_story_v3(job, get=fetch):
+def full_header(title, t):
+    """The title band on a full-screen Short: see-through navy, placed by the framing check clear of the person."""
+    x0, y0, x1, y1 = title["rect"]
+    w, h = x1 - x0, y1 - y0
+    out = f"drawbox=x={x0}:y={y0}:w={w}:h={h}:color=0x0F1133@0.55:t=fill,"
+    if title["kind"] == "strip":
+        out += (f"drawtext=fontfile='{FONT}':textfile='{t / 'series.txt'}':fontsize={max(12, int(h * 0.26))}:fontcolor=0xF2BE50:x=(w-text_w)/2:y={y0 + int(h * 0.12)},"
+                f"drawtext=fontfile='{FONT}':textfile='{t / 'title.txt'}':fontsize={max(14, int(h * 0.36))}:fontcolor=white:x=(w-text_w)/2:y={y0 + int(h * 0.48)}")
+    else:   # corner tag: the title only, shortened to fit the tag
+        size = max(14, int(title["font"]))
+        fit = max(6, int((w - 16) / (size * 0.62)))
+        text = (t / "title.txt").read_text()
+        (t / "tagtitle.txt").write_text(text if len(text) <= fit else text[:fit - 1].rstrip() + "…")
+        out += f"drawtext=fontfile='{FONT}':textfile='{t / 'tagtitle.txt'}':fontsize={size}:fontcolor=white:x={x0}+({w}-text_w)/2:y={y0}+({h}-text_h)/2"
+    return out
+
+def render_story_v3(job, get=fetch, full=False):
+    if full and (job.get("version") != "short" or (job.get("frame") or "9:16") != "9:16"):
+        raise ValueError("Full-screen layout is for the 9:16 Short only")
     version, segs, cuts, g = check_story_v3(job)
     hold, cut = check_ending(job)
     tag_top, tag_bottom = tagline_extra(job.get("end_tagline_top")), tagline_extra(job.get("end_tagline_bottom"))
@@ -628,6 +659,12 @@ def render_story_v3(job, get=fetch):
             if s["signed_url"] not in srcs:
                 srcs[s["signed_url"]] = t / f"src{len(srcs)}"; get(s["signed_url"], srcs[s["signed_url"]])
         pieces = story_pieces(segs, cuts)
+        fr = None
+        if full:   # the same check Scout ran before any voice: refuse rather than crop around part of the movement
+            import scout_framing as sf
+            fr = sf.measure(srcs, list(srcs), segs)
+            if not fr["ok"]:
+                raise ValueError("Framing: " + fr["message"])
         story_len = sum(z - a for _, a, z in pieces) + hold     # the held last frame is part of the story
         setup_end = float(segs[0]["end"]) - float(segs[0]["start"])
         win_start = story_len - hold - (float(segs[2]["end"]) - float(segs[2]["start"]))   # the hold comes after the win footage
@@ -648,7 +685,7 @@ def render_story_v3(job, get=fetch):
             (t / f"{name}.txt").write_text(value)
         captions_ass_v3(t / "captions.ass", g, words, offset, "" if words else wrap(clean(job.get("hook"), 40)), "" if words else wrap(clean(job.get("payoff"), 48)),
                         setup_end, win_start, story_len, video_len, tagline, opening_len + story_len - TAG_SECONDS,
-                        tag_top if tagline else None, tag_bottom if tagline else None)
+                        tag_top if tagline else None, tag_bottom if tagline else None, cap=fr["bands"]["caption"] if fr else None)
         W, H, WIN, TOP, BAR, ZONE_Y = g["W"], g["H"], g["WIN"], g["TOP"], g["BAR"], g["ZONE_Y"]
         args = [FFMPEG, "-nostdin", "-hide_banner", "-v", "error", "-y", "-i", str(first)]
         for s, a, z in pieces:
@@ -659,12 +696,16 @@ def render_story_v3(job, get=fetch):
         tag = f"{colour},setsar=1,fps={FPS},format=yuv420p"
         fit = f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=0x0B0D26,{tag}"
         fits = {}                                          # per clip: the largest size that keeps the whole movement in view
-        for url, path in srcs.items():
+        for url, path in ({} if fr else srcs).items():
             sw0, sh0 = video_size(path)
             spans = [(a, z) for s, a, z in pieces if s["signed_url"] == url]
             rows = movement_rows(path, spans)
             fits[url] = body_fit(rows, movement_cols(path, spans), sw0, sh0, W, WIN) if rows else None
         def win(idx, sw, sh, label, url=None):
+            if fr:   # full-screen: exactly the checked 9:16 box, filling the whole Short
+                bx0, by0, bx1, by1 = fr["clips"][list(srcs).index(url)]["box"]
+                cw, ch = int(round((bx1 - bx0) * sw / 2) * 2), int(round((by1 - by0) * sh / 2) * 2)
+                return f"[{idx}:v]crop={cw}:{ch}:{int(bx0 * sw)}:{int(by0 * sh)},scale={W}:{H},{tag}[{label}]"
             f = fits.get(url)
             if f is None:                                  # movement unclear: the whole picture, blurred edges
                 return (f"[{idx}:v]split[{label}a][{label}b];[{label}a]scale={W}:{WIN}:force_original_aspect_ratio=increase,crop={W}:{WIN},gblur=sigma=28,eq=brightness=-0.12[{label}bg];"
@@ -674,7 +715,10 @@ def render_story_v3(job, get=fetch):
                     f"[{label}b]scale={vw}:{vh},crop={dw}:{dh}:{cx}:{cy}[{label}fg];[{label}bg][{label}fg]overlay=(W-w)/2:(H-h)/2,{tag}[{label}]")
         windows = ";".join(win(i + 1, *video_size(srcs[s["signed_url"]]), f"w{i}", s["signed_url"]) for i, (s, _, _) in enumerate(pieces))
         held = f"tpad=stop_mode=clone:stop_duration={hold:.2f}," if hold > 0 else ""
-        story = (f"{windows};{''.join(f'[w{i}]' for i in range(n))}concat=n={n}:v=1:a=0,{held}pad={W}:{H}:0:{TOP}:color=0x0B0D26,{tag},"
+        if fr:
+            story = f"{windows};{''.join(f'[w{i}]' for i in range(n))}concat=n={n}:v=1:a=0,{held}{tag}," + full_header(fr["bands"]["title"], t) + "[mid]"
+        else:
+          story = (f"{windows};{''.join(f'[w{i}]' for i in range(n))}concat=n={n}:v=1:a=0,{held}pad={W}:{H}:0:{TOP}:color=0x0B0D26,{tag},"
                  f"drawbox=x=0:y=0:w=iw:h={TOP}:color=0x101239@1:t=fill,"
                  f"drawtext=fontfile='{FONT}':textfile='{t / 'series.txt'}':fontsize={g['series']}:fontcolor=0xF2BE50:x=(w-text_w)/2:y={int(TOP * 0.22)},"
                  f"drawtext=fontfile='{FONT}':textfile='{t / 'title.txt'}':fontsize={g['title']}:fontcolor=white:x=(w-text_w)/2:y={int(TOP * 0.52)},"

@@ -184,7 +184,7 @@ print("Scout end tagline (design polish): PASS")
 
 # ---- wider footage only when the whole body still fits; otherwise today's width ----
 real = (0.219, 0.656)    # where things move in your hip-thrust clip (measured)
-assert ss.widen_fits(real, 1080, 1920, 720, 804, ss.SIDE_EDGE) is True            # Short: 684 px wide, whole body
+assert ss.widen_fits(real, 1080, 1920, 720, 804, ss.SIDE_EDGE) is False           # 2026-10-31: more head room (0.06), so the Short no longer widens this clip (safer)
 assert ss.widen_fits(real, 1080, 1920, 720, 550, ss.LONG_SIDE_EDGE) is True       # Long: about 440 px wide, whole body
 assert ss.widen_fits(real, 1080, 1920, 720, 550, ss.SIDE_EDGE) is False           # the old thin edge on the Long would cut the body: refused
 assert ss.widen_fits((0.05, 0.95), 1080, 1920, 720, 804, ss.SIDE_EDGE) is False   # framed too tightly: keep today's width

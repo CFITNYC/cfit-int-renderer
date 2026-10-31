@@ -10,6 +10,7 @@ from worker_autonomous_private_STAGING import render_autonomous
 from scout_branded import scout_branded
 from scout_story import source_check as scout_source_check, render_story as scout_story
 from scout_reframe import reframe_measure, reframe_render
+from scout_framing import framing_check as scout_framing_check
 
 def private_audio_mix(job):
     """Finish a previously rendered private video; preserve existing images and branding."""
@@ -141,6 +142,8 @@ class Handler(BaseHandler):
                 return self.answer(200, scout_source_check(job))
             elif mode == "scout_reframe_measure":
                 return self.answer(200, reframe_measure(job))
+            elif mode == "scout_framing_check":   # free: where the person moves, the 9:16 box and band places (no AI, no voice)
+                return self.answer(200, scout_framing_check(job))
             elif mode == "inspect_original_frames_private":
                 sources=job.get("sources")
                 if not isinstance(sources,list) or not 1<=len(sources)<=3:
