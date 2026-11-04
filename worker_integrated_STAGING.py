@@ -142,7 +142,7 @@ class Handler(BaseHandler):
                 return self.answer(200, scout_source_check(job))
             elif mode == "scout_reframe_measure":
                 return self.answer(200, reframe_measure(job))
-            elif mode == "scout_framing_check":   # free: where the person moves, the 9:16 box and band places (no AI, no voice)
+            elif mode == "scout_framing_check":   # free: the banded framing check and 3 stills (no AI, no voice)
                 return self.answer(200, scout_framing_check(job))
             elif mode == "inspect_original_frames_private":
                 sources=job.get("sources")
@@ -179,8 +179,8 @@ class Handler(BaseHandler):
                 video = render_autonomous(job)
             elif mode == "cfit_branded_preview_staging":
                 video = branded_preview(job)
-            elif mode == "scout_branded_short":
-                video = scout_branded(job)
+            elif mode == "scout_branded_short":   # retired 2026-11-04: Scout videos are banded only (scout_story_short, layout v3)
+                raise ValueError("Only the banded layout is allowed. Nothing was made.")
             elif mode == "scout_story_short":
                 video = scout_story(job)
             elif mode in ("scout_reframe_preview", "scout_reframe_save"):

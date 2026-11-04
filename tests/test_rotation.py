@@ -3,7 +3,6 @@ The renderer must read it as portrait everywhere it reads a clip's size. Needs f
 import pathlib, subprocess, tempfile
 
 import scout_story as ss
-import scout_framing as sf
 import scout_reframe as sr
 
 # 1. the size text, both ways ffmpeg prints a rotation (newer: displaymatrix; older: rotate tag)
@@ -45,22 +44,18 @@ with tempfile.TemporaryDirectory() as td:
     # frames come out upright, so they match the size now read
     fr = ss.gray_frames(rot, 0, 1, fps=2, w=36, h=64)
     assert fr and len(fr[0]) == 36 * 64
-    # framing: a rotated portrait clip is shown whole and passes (before the fix: judged landscape)
-    r = sf.measure({"u": rot}, ["u"], [{"signed_url": "u", "start": 0.5, "end": 3.5}])
-    c = r["clips"][0]   # the crop itself (band placement depends on the made-up picture, not on this fix)
-    assert c["ok"] and c["portrait"] and c["box"][0] == 0.0 and c["box"][2] == 1.0, r
-    assert r.get("reason") != "too_wide", r
-    assert r["sources"][0]["portrait"] is True, r["sources"]
+    # framing (banded): a rotated portrait clip is measured upright and framed in the window
+    fits = ss.banded_fits({"u": rot}, [({"signed_url": "u"}, 0.5, 3.5)], ss.frame_geometry("9:16"))
+    vw, vh = fits["u"][0], fits["u"][1]
+    assert vh > vw, fits                                      # scaled as an upright picture
     # reframe: it's already tall
     try:
         w, h = ss.video_size(rot); assert sr.box_width(w, h) >= w
     except AttributeError:
         pass
-    # a real landscape clip (no note) is still landscape and still refused when the movement is wider than 9:16
+    # a real landscape clip (no note) is still landscape
     wide = t / "wide.mp4"; clip(wide, 640, 360, x_expr="iw*0.05+iw*0.7*(0.5+0.5*sin(t*3))")
     assert ss.video_size(wide) == (640, 360)
-    r = sf.measure({"u": wide}, ["u"], [{"signed_url": "u", "start": 0.5, "end": 3.5}])
-    assert not r["ok"] and r["reason"] == "too_wide", r
     # upside-down (180°) keeps its shape
     flip = t / "flip.mp4"; clip(flip, 640, 360, rotate=180)
     assert ss.video_size(flip) == (640, 360)

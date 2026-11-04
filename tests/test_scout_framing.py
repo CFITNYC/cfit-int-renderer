@@ -1,5 +1,6 @@
-"""Scout framing check: safety and placement tests (no network, no ffmpeg)."""
-import scout_framing as sf
+"""Scout framing check, banded only (2026-11-04): safety, the refusal and the banded stills. Needs ffmpeg on PATH."""
+import pathlib, shutil, subprocess, tempfile
+import scout_story as ss, scout_framing as sf
 
 def refused(fn, job, words):
     try:
@@ -16,56 +17,34 @@ refused(sf._private, {**job, "mode": "scout_story_short"}, "Private framing chec
 refused(sf._private, {**job, "segments": []}, "1-6 clips required")
 refused(sf._private, {**job, "segments": [{"signed_url": url, "start": 3, "end": 2}]}, "0-30 seconds")
 refused(sf._private, {**job, "segments": [{"signed_url": url.replace("cfit-exercise-videos", "cfit-billing"), "start": 0, "end": 2}]}, "Private library")
+refused(sf._private, {**job, "layout": "full"}, "Only the banded layout is allowed")
+refused(sf._private, {**job, "challenge_cuts": 9}, "1-4")
+assert not hasattr(sf, "crop_box") and not hasattr(sf, "place_bands")            # the full-screen 9:16 box and see-through bands are gone
+# the check uses the same seconds as the render: the challenge as fast cuts
+segs = [{"role": "setup", "start": 0, "end": 2}, {"role": "challenge", "start": 3, "end": 8}, {"role": "win", "start": 9, "end": 12}]
+assert [(a, z) for _, a, z in sf.pieces_of(segs, 3)] == [(0, 2)] + ss.challenge_cuts(3, 8, 3) + [(9, 12)]
 
-def env(x, y, per=None):
-    return {"x": x, "y": y, "seconds": per or {0: x}}
+def clip(path, w, h, moving=True, seconds=6):
+    bw, bh = int(w * 0.25), int(h * 0.6)
+    x = "(W-w)/2+W*0.15*sin(t*4)" if moving else "(W-w)/2"
+    fc = (f"color=c=0x202020:s={w}x{h}:d={seconds}:r=15[bg];color=c=white:s={bw}x{bh}:d={seconds}:r=15[fg];"
+          f"[bg][fg]overlay=x='{x}':y=H*0.2:shortest=1")
+    subprocess.run([ss.FFMPEG, "-v", "error", "-y", "-filter_complex", fc, "-c:v", "libx264", "-pix_fmt", "yuv420p", str(path)], check=True)
 
-# portrait 9:16: always the whole clip; nothing cropped
-c = sf.crop_box(1080, 1920, env((0.1, 0.65), (0.07, 0.9)))
-assert c["ok"] and c["box"] == (0.0, 0.0, 1.0, 1.0), c
-# landscape: the movement fits a 9:16 box (box is 0.316 of the width)
-c = sf.crop_box(1920, 1080, env((0.40, 0.58), (0.1, 0.95), {0: (0.40, 0.58), 1: (0.42, 0.57)}))
-assert c["ok"] and abs((c["box"][2] - c["box"][0]) - 9 / 16 / (1920 / 1080)) < 1e-9, c
-assert c["box"][0] <= 0.40 - sf.SIDE_ROOM and c["box"][2] >= 0.58 + sf.SIDE_ROOM, c
-# landscape: a long, low drill (quadruped) does not fit: refused with the cut seconds, never a tighter crop
-c = sf.crop_box(1920, 1080, env((0.15, 0.85), (0.4, 0.9), {1: (0.40, 0.55), 2: (0.15, 0.85), 3: (0.15, 0.8), 7: (0.42, 0.56)}))
-assert not c["ok"] and c["reason"] == "too_wide" and c["red_seconds"] == [2, 3], c
-assert "2–3 s" in c["message"], c["message"]
-assert c["box"][0] <= 0.40 - sf.SIDE_ROOM and c["box"][2] >= 0.56 + sf.SIDE_ROOM   # the box that cuts the fewest seconds
-# nothing moving: refused as unclear (no guessing)
-assert sf.crop_box(1920, 1080, None)["reason"] == "unclear"
-
-# decide: a refusal names reshoot only for the 9:16 problems
-d = sf.decide([(1920, 1080, env((0.15, 0.85), (0.4, 0.9), {2: (0.15, 0.85)}))])
-assert not d["ok"] and d["needs_reshoot"] and d["red_seconds"] == [2]
-d = sf.decide([(1920, 1080, None)])
-assert not d["ok"] and not d["needs_reshoot"] and d["reason"] == "unclear"
-
-# bands: never on the body; the title strip shrinks before it moves; captions avoid YouTube's areas
-def clear(d):
-    b = d["body"]
-    for r in (d["bands"]["title"]["rect"], d["bands"]["caption"]["rect"]):
-        assert not sf._overlap(r, b, sf.BODY_PAD - 1), (r, b)
-    for z in sf._youtube_zones():
-        assert not sf._overlap(d["bands"]["caption"]["rect"], z), d["bands"]["caption"]
-d = sf.decide([(1080, 1920, env((0.05, 0.62), (0.14, 0.9)))])        # person on the left, wall on the right
-assert d["ok"]; clear(d)
-assert d["bands"]["title"]["kind"] == "strip" and d["bands"]["title"]["rect"][3] == 64
-assert d["bands"]["caption"]["rect"][0] > 720 * 0.62, d["bands"]["caption"]   # on the free side
-d = sf.decide([(1080, 1920, env((0.3, 0.7), (0.08, 0.9)))])          # head close to the top: the strip shrinks
-assert d["ok"]; clear(d); assert d["bands"]["title"]["rect"][3] < 64, d["bands"]["title"]
-d = sf.decide([(1080, 1920, env((0.3, 0.7), (0.0, 0.9)))])           # head at the very top, centred: a corner tag instead
-assert d["ok"]; clear(d); assert d["bands"]["title"]["kind"] == "tag", d["bands"]["title"]
-d = sf.decide([(1080, 1920, env((0.0, 1.0), (0.0, 1.0)))])           # movement everywhere: no room, refused, nothing cropped
-assert not d["ok"] and d["reason"] == "no_room" and not d["needs_reshoot"]
-d = sf.decide([(1080, 1920, env((0.05, 0.62), (0.12, 0.97)))])       # feet in YouTube's bottom area: a warning only
-assert d["ok"] and d["warnings"], d
-
-# per-second envelope from motion pairs
-pairs = [([0, 0, 50, 50, 0, 0, 0, 0], [0, 40, 40, 0]) for _ in range(6)]
-e = sf.envelope(pairs, fps=3, start=10)
-assert e["x"] == (0.25, 0.5) and e["y"] == (0.25, 0.75) and set(e["seconds"]) == {10, 11, 12}, e
-assert sf.envelope([([0.1] * 8, [0.1] * 4)]) is None
-m = sf.merge([env((0.2, 0.4), (0.1, 0.5), {1: (0.2, 0.4)}), env((0.3, 0.6), (0.2, 0.9), {1: (0.35, 0.6), 2: (0.3, 0.5)})])
-assert m["x"] == (0.2, 0.6) and m["y"] == (0.1, 0.9) and m["seconds"] == {1: (0.2, 0.6), 2: (0.3, 0.5)}
+with tempfile.TemporaryDirectory() as td:
+    t = pathlib.Path(td)
+    files = {"move": t / "move.mp4", "still": t / "still.mp4", "wide": t / "wide.mp4"}
+    clip(files["move"], 360, 640); clip(files["still"], 360, 640, moving=False); clip(files["wide"], 640, 360)
+    U = lambda k: url.replace("a.mp4", k + ".mp4")
+    get = lambda u, p: shutil.copy(files[u.split("/")[-1].split(".mp4")[0]], p)
+    story = lambda k: {"mode": "scout_framing_check", "publishing_enabled": False, "stills": True, "challenge_cuts": 3,
+                       "segments": [{"role": r, "signed_url": U(k), "start": a, "end": z} for r, a, z in (("setup", 0, 1.5), ("challenge", 1.5, 4.5), ("win", 4.5, 5.8))]}
+    r = sf.framing_check(story("move"), get)                       # a portrait clip: framed in the banded window, 3 stills
+    assert r["ok"] and r["layout"] == "banded" and len(r["stills"]) == 3 and r["credits_spent"] == 0, r.get("message")
+    assert all(s.startswith("data:image/jpeg;base64,") for s in r["stills"])
+    r = sf.framing_check(story("wide"), get)                       # a wide clip: also banded (navy above and below if needed)
+    assert r["ok"] and r["sources"][0]["portrait"] is False
+    r = sf.framing_check(story("still"), get)                      # nothing moves: refused, no fallback picture
+    assert not r["ok"] and r["reason"] == "unclear" and "banded layout" in r["message"] and "stills" not in r, r
+    assert r["needs_reshoot"] is False
 print("test_scout_framing: all passed")

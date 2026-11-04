@@ -5,7 +5,7 @@
 #                      FINISHED EDIT rather than raw footage (your opening/closing inside it, or several hard cuts).
 # scout_story_short  : opening -> SETUP (hook line) -> CHALLENGE -> WIN (payoff line) -> closing, one continuous video:
 #                      720x1280, 30 fps, BT.709, one silent stereo track; series tag + title band, CFIT bar.
-#                      layout "v2" (2026-10-27): nothing is ever drawn on the footage. The footage sits in its own window;
+#                      2026-11-04: ONLY the banded layout (v3) is made; full-screen, v2 and older layouts are refused.
 #                      the hook, payoff and (once the voiceover exists) word-by-word captions go in a caption area below it.
 import math, pathlib, re, subprocess, tempfile, urllib.parse, urllib.request
 
@@ -147,15 +147,6 @@ def size_from_probe(err):
         w, h = h, w
     return (w, h)
 
-def window_filter(idx, src_w, src_h, label, tag):
-    """Wide clips fill the window (centre crop). Tall clips are shown whole, with a soft blurred copy behind."""
-    if src_w / src_h >= 0.9:
-        return f"[{idx}:v]scale=720:{V2_WIN}:force_original_aspect_ratio=increase,crop=720:{V2_WIN},{tag}[{label}]"
-    return (f"[{idx}:v]split[{label}a][{label}b];"
-            f"[{label}a]scale=720:{V2_WIN}:force_original_aspect_ratio=increase,crop=720:{V2_WIN},gblur=sigma=28,eq=brightness=-0.12[{label}bg];"
-            f"[{label}b]scale=720:{V2_WIN}:force_original_aspect_ratio=decrease[{label}fg];"
-            f"[{label}bg][{label}fg]overlay=(W-w)/2:(H-h)/2,{tag}[{label}]")
-
 def ass_time(t):
     t = max(0.0, t)
     return f"{int(t // 3600)}:{int(t % 3600 // 60):02d}:{t % 60:05.2f}"
@@ -245,95 +236,15 @@ def text_filter(textfile, size, color, start, end):
     return (f"drawtext=fontfile='{FONT}':textfile='{textfile}':fontsize={size}:fontcolor={color}:"
             f"x=(w-text_w)/2:y=h*0.30:line_spacing=10:box=1:boxcolor=black@0.55:boxborderw=18:enable='between(t,{start:.2f},{end:.2f})'")
 
+BANDED_ONLY = "Only the banded layout is allowed. Nothing was made."
+BLUR_SIDES = "gblur=sigma=28,eq=brightness=-0.12"   # 2026-11-04: the original design (EP10, EP18): a soft blurred copy beside the clip
+
 def render_story(job, get=fetch):
-    if job.get("layout") == "full":       # 2026-10-31: full-screen 9:16 Short, framing checked (Nick's rules)
-        return render_story_v3(job, get, full=True)
-    if job.get("layout") == "v3":
-        return render_story_v3(job, get)
-    if job.get("layout") == "v2":
-        return render_story_v2(job, get)
-    segs, hook, payoff, story_len = check_story(job)
-    b = job["branding"]
-    with tempfile.TemporaryDirectory() as td:
-        t = pathlib.Path(td)
-        first, last, out = t / "opening.mp4", t / "closing.mp4", t / "story.mp4"
-        get(b["opening_signed_url"], first); get(b["closing_signed_url"], last)
-        srcs = {}
-        for s in segs:
-            if s["signed_url"] not in srcs:
-                srcs[s["signed_url"]] = t / f"src{len(srcs)}"; get(s["signed_url"], srcs[s["signed_url"]])
-        for name, value in {"title": clean(job.get("title"), 40) or "CFIT METHOD", "series": clean(job.get("series"), 30) or "STAY GROUNDED",
-                            "hook": wrap(hook), "payoff": wrap(payoff), "bar": "CFIT METHOD  |  CREATIVE FITNESS NYC"}.items():
-            (t / f"{name}.txt").write_text(value)
-        args = [FFMPEG, "-nostdin", "-hide_banner", "-v", "error", "-y", "-i", str(first)]
-        for s in segs:
-            args += ["-ss", f"{float(s['start']):.3f}", "-t", f"{float(s['end']) - float(s['start']):.3f}", "-i", str(srcs[s["signed_url"]])]
-        args += ["-i", str(last), "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
-        tag = f"setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv,setsar=1,fps={FPS},format=yuv420p"
-        fit = f"scale={SIZE}:force_original_aspect_ratio=decrease,pad={SIZE}:(ow-iw)/2:(oh-ih)/2:color=black,{tag}"
-        fill = f"scale={SIZE}:force_original_aspect_ratio=increase,crop={SIZE},{tag}"
-        story = (f"[1:v]{fill}[s1];[2:v]{fill}[s2];[3:v]{fill}[s3];[s1][s2][s3]concat=n=3:v=1:a=0,"
-                 f"drawbox=x=0:y=0:w=iw:h=150:color=0x101239@0.82:t=fill,"
-                 f"drawtext=fontfile='{FONT}':textfile='{t / 'series.txt'}':fontsize=22:fontcolor=0xF2BE50:x=(w-text_w)/2:y=34,"
-                 f"drawtext=fontfile='{FONT}':textfile='{t / 'title.txt'}':fontsize=30:fontcolor=white:x=(w-text_w)/2:y=76,"
-                 f"{text_filter(t / 'hook.txt', 48, 'white', 0.15, HOOK_SECONDS)},"
-                 f"{text_filter(t / 'payoff.txt', 48, '0xF2BE50', story_len - PAYOFF_SECONDS, story_len)},"
-                 f"drawbox=x=0:y=ih-96:w=iw:h=96:color=black@0.58:t=fill,"
-                 f"drawtext=fontfile='{FONT}':textfile='{t / 'bar.txt'}':fontsize=21:fontcolor=white:x=(w-text_w)/2:y=h-62[mid]")
-        graph = f"[0:v]{fit}[a];{story};[4:v]{fit}[c];[a][mid][c]concat=n=3:v=1:a=0[v]"
-        args += ["-filter_complex", graph, "-map", "[v]", "-map", "5:a", "-shortest",
-                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
-                 "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv",
-                 "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(out)]
-        subprocess.run(args, check=True, timeout=150, capture_output=True)
-        return out.read_bytes()
-
-
-def render_story_v2(job, get=fetch):
-    """Layout v2: navy band (series + title), footage window (nothing drawn on it), caption area, CFIT bar."""
-    words_in = job.get("words") or []
-    if words_in:   # with a voiceover the spoken captions tell the story; hook and payoff are not shown
-        job = {**job, "hook": job.get("hook") or "-", "payoff": job.get("payoff") or "-"}
-    segs, hook, payoff, story_len = check_story(job)
-    words = check_words(words_in, story_len)
-    lens = [float(s["end"]) - float(s["start"]) for s in segs]
-    b = job["branding"]
-    with tempfile.TemporaryDirectory() as td:
-        t = pathlib.Path(td)
-        first, last, out = t / "opening.mp4", t / "closing.mp4", t / "story.mp4"
-        get(b["opening_signed_url"], first); get(b["closing_signed_url"], last)
-        srcs = {}
-        for s in segs:
-            if s["signed_url"] not in srcs:
-                srcs[s["signed_url"]] = t / f"src{len(srcs)}"; get(s["signed_url"], srcs[s["signed_url"]])
-        for name, value in {"title": clean(job.get("title"), 40) or "CFIT METHOD", "series": clean(job.get("series"), 30) or "STAY GROUNDED",
-                            "bar": "CFIT METHOD  |  CREATIVE FITNESS NYC"}.items():
-            (t / f"{name}.txt").write_text(value)
-        captions_ass(t / "captions.ass", story_len, "" if words else wrap(hook), "" if words else wrap(payoff), lens[0], lens[0] + lens[1], words)
-        args = [FFMPEG, "-nostdin", "-hide_banner", "-v", "error", "-y", "-i", str(first)]
-        for s in segs:
-            args += ["-ss", f"{float(s['start']):.3f}", "-t", f"{float(s['end']) - float(s['start']):.3f}", "-i", str(srcs[s["signed_url"]])]
-        args += ["-i", str(last), "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
-        colour = "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv"
-        tag = f"{colour},setsar=1,fps={FPS},format=yuv420p"
-        fit = f"scale={SIZE}:force_original_aspect_ratio=decrease,pad={SIZE}:(ow-iw)/2:(oh-ih)/2:color=black,{tag}"
-        windows = ";".join(window_filter(i + 1, *video_size(srcs[s["signed_url"]]), f"w{i}", tag) for i, s in enumerate(segs))
-        story = (f"{windows};[w0][w1][w2]concat=n=3:v=1:a=0,pad=720:1280:0:{V2_TOP}:color=0x0B0D26,{tag},"
-                 f"drawbox=x=0:y=0:w=iw:h={V2_TOP}:color=0x101239@1:t=fill,"
-                 f"drawtext=fontfile='{FONT}':textfile='{t / 'series.txt'}':fontsize=22:fontcolor=0xF2BE50:x=(w-text_w)/2:y=34,"
-                 f"drawtext=fontfile='{FONT}':textfile='{t / 'title.txt'}':fontsize=30:fontcolor=white:x=(w-text_w)/2:y=76,"
-                 f"drawbox=x=0:y={V2_ZONE_Y}:w=iw:h=3:color=0xF2BE50@0.85:t=fill,"
-                 f"subtitles='{t / 'captions.ass'}',"
-                 f"drawbox=x=0:y=ih-{V2_BAR}:w=iw:h={V2_BAR}:color=black@0.85:t=fill,"
-                 f"drawtext=fontfile='{FONT}':textfile='{t / 'bar.txt'}':fontsize=21:fontcolor=white:x=(w-text_w)/2:y=h-62[mid]")
-        graph = f"[0:v]{fit}[a];{story};[4:v]{fit}[c];[a][mid][c]concat=n=3:v=1:a=0[v]"
-        args += ["-filter_complex", graph, "-map", "[v]", "-map", "5:a", "-shortest",
-                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
-                 "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv",
-                 "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(out)]
-        subprocess.run(args, check=True, timeout=150, capture_output=True)
-        return out.read_bytes()
-
+    # 2026-11-04, Nick's standing rule: the banded layout (v3) is the ONLY layout for every video. No full-screen, older or
+    # default layout, not even as a fallback: anything else is refused before anything is downloaded or made.
+    if job.get("layout") != "v3":
+        raise ValueError(BANDED_ONLY)
+    return render_story_v3(job, get)
 
 # ================= layout v3 (Stage 3, 2026-10-27): platform versions, Nick voice, music =================
 # Short version (TikTok, Reels, Shorts): 9:16, the challenge as fast cuts, the voice starts over the opening logo.
@@ -637,25 +548,22 @@ def check_ending(job):
             raise ValueError("Voice cut must be after 0.5 s")
     return round(hold, 2), cut
 
-def full_header(title, t):
-    """The title band on a full-screen Short: see-through navy, placed by the framing check clear of the person."""
-    x0, y0, x1, y1 = title["rect"]
-    w, h = x1 - x0, y1 - y0
-    out = f"drawbox=x={x0}:y={y0}:w={w}:h={h}:color=0x0F1133@0.55:t=fill,"
-    if title["kind"] == "strip":
-        out += (f"drawtext=fontfile='{FONT}':textfile='{t / 'series.txt'}':fontsize={max(12, int(h * 0.26))}:fontcolor=0xF2BE50:x=(w-text_w)/2:y={y0 + int(h * 0.12)},"
-                f"drawtext=fontfile='{FONT}':textfile='{t / 'title.txt'}':fontsize={max(14, int(h * 0.36))}:fontcolor=white:x=(w-text_w)/2:y={y0 + int(h * 0.48)}")
-    else:   # corner tag: the title only, shortened to fit the tag
-        size = max(14, int(title["font"]))
-        fit = max(6, int((w - 16) / (size * 0.62)))
-        text = (t / "title.txt").read_text()
-        (t / "tagtitle.txt").write_text(text if len(text) <= fit else text[:fit - 1].rstrip() + "…")
-        out += f"drawtext=fontfile='{FONT}':textfile='{t / 'tagtitle.txt'}':fontsize={size}:fontcolor=white:x={x0}+({w}-text_w)/2:y={y0}+({h}-text_h)/2"
-    return out
+def banded_fits(srcs, pieces, g):
+    """Nick's banded rule (2026-11-04): each clip as large as the whole movement allows inside the clip window, the original design.
+    Refuses (nothing made) when Scout can't tell where the person moves: there is no fallback picture. The free framing check
+    uses this same function on the same seconds, so the check and the render can't disagree."""
+    fits = {}
+    for url, path in srcs.items():
+        spans = [(a, z) for s, a, z in pieces if s["signed_url"] == url]
+        rows = movement_rows(path, spans)
+        if not rows:
+            secs = ", ".join(f"{a:.0f}-{z:.0f} s" for a, z in spans)
+            raise ValueError(f"Scout can't tell where you move in this clip ({secs}), so it can't be framed in the banded layout. Nothing was made.")
+        sw, sh = video_size(path)
+        fits[url] = body_fit(rows, movement_cols(path, spans), sw, sh, g["W"], g["WIN"])
+    return fits
 
-def render_story_v3(job, get=fetch, full=False):
-    if full and (job.get("version") != "short" or (job.get("frame") or "9:16") != "9:16"):
-        raise ValueError("Full-screen layout is for the 9:16 Short only")
+def render_story_v3(job, get=fetch):
     version, segs, cuts, g = check_story_v3(job)
     hold, cut = check_ending(job)
     tag_top, tag_bottom = tagline_extra(job.get("end_tagline_top")), tagline_extra(job.get("end_tagline_bottom"))
@@ -673,12 +581,7 @@ def render_story_v3(job, get=fetch, full=False):
             if s["signed_url"] not in srcs:
                 srcs[s["signed_url"]] = t / f"src{len(srcs)}"; get(s["signed_url"], srcs[s["signed_url"]])
         pieces = story_pieces(segs, cuts)
-        fr = None
-        if full:   # the same check Scout ran before any voice: refuse rather than crop around part of the movement
-            import scout_framing as sf
-            fr = sf.measure(srcs, list(srcs), segs)
-            if not fr["ok"]:
-                raise ValueError("Framing: " + fr["message"])
+        fits = banded_fits(srcs, pieces, g)   # refuses before anything is made if a clip can't be framed
         story_len = sum(z - a for _, a, z in pieces) + hold     # the held last frame is part of the story
         setup_end = float(segs[0]["end"]) - float(segs[0]["start"])
         win_start = story_len - hold - (float(segs[2]["end"]) - float(segs[2]["start"]))   # the hold comes after the win footage
@@ -699,7 +602,7 @@ def render_story_v3(job, get=fetch, full=False):
             (t / f"{name}.txt").write_text(value)
         captions_ass_v3(t / "captions.ass", g, words, offset, "" if words else wrap(clean(job.get("hook"), 40)), "" if words else wrap(clean(job.get("payoff"), 48)),
                         setup_end, win_start, story_len, video_len, tagline, opening_len + story_len - TAG_SECONDS,
-                        tag_top if tagline else None, tag_bottom if tagline else None, cap=fr["bands"]["caption"] if fr else None)
+                        tag_top if tagline else None, tag_bottom if tagline else None, cap=None)
         W, H, WIN, TOP, BAR, ZONE_Y = g["W"], g["H"], g["WIN"], g["TOP"], g["BAR"], g["ZONE_Y"]
         args = [FFMPEG, "-nostdin", "-hide_banner", "-v", "error", "-y", "-i", str(first)]
         for s, a, z in pieces:
@@ -709,30 +612,13 @@ def render_story_v3(job, get=fetch, full=False):
         colour = "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv"
         tag = f"{colour},setsar=1,fps={FPS},format=yuv420p"
         fit = f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=0x0B0D26,{tag}"
-        fits = {}                                          # per clip: the largest size that keeps the whole movement in view
-        for url, path in ({} if fr else srcs).items():
-            sw0, sh0 = video_size(path)
-            spans = [(a, z) for s, a, z in pieces if s["signed_url"] == url]
-            rows = movement_rows(path, spans)
-            fits[url] = body_fit(rows, movement_cols(path, spans), sw0, sh0, W, WIN) if rows else None
-        def win(idx, sw, sh, label, url=None):
-            if fr:   # full-screen: exactly the checked 9:16 box, filling the whole Short
-                bx0, by0, bx1, by1 = fr["clips"][list(srcs).index(url)]["box"]
-                cw, ch = int(round((bx1 - bx0) * sw / 2) * 2), int(round((by1 - by0) * sh / 2) * 2)
-                return f"[{idx}:v]crop={cw}:{ch}:{int(bx0 * sw)}:{int(by0 * sh)},scale={W}:{H},{tag}[{label}]"
-            f = fits.get(url)
-            if f is None:                                  # movement unclear: the whole picture, blurred edges
-                return (f"[{idx}:v]split[{label}a][{label}b];[{label}a]scale={W}:{WIN}:force_original_aspect_ratio=increase,crop={W}:{WIN},gblur=sigma=28,eq=brightness=-0.12[{label}bg];"
-                        f"[{label}b]scale={W}:{WIN}:force_original_aspect_ratio=decrease[{label}fg];[{label}bg][{label}fg]overlay=(W-w)/2:(H-h)/2,{tag}[{label}]")
-            vw, vh, cx, cy, dw, dh = f
-            return (f"[{idx}:v]split[{label}a][{label}b];[{label}a]scale={W}:{WIN}:force_original_aspect_ratio=increase,crop={W}:{WIN},gblur=sigma=28,eq=brightness=-0.12[{label}bg];"
+        def win(idx, sw, sh, label, url=None):   # the clip as large as the whole movement allows, a soft blurred copy at the sides (the original design)
+            vw, vh, cx, cy, dw, dh = fits[url]
+            return (f"[{idx}:v]split[{label}a][{label}b];[{label}a]scale={W}:{WIN}:force_original_aspect_ratio=increase,crop={W}:{WIN},{BLUR_SIDES}[{label}bg];"
                     f"[{label}b]scale={vw}:{vh},crop={dw}:{dh}:{cx}:{cy}[{label}fg];[{label}bg][{label}fg]overlay=(W-w)/2:(H-h)/2,{tag}[{label}]")
         windows = ";".join(win(i + 1, *video_size(srcs[s["signed_url"]]), f"w{i}", s["signed_url"]) for i, (s, _, _) in enumerate(pieces))
         held = f"tpad=stop_mode=clone:stop_duration={hold:.2f}," if hold > 0 else ""
-        if fr:
-            story = f"{windows};{''.join(f'[w{i}]' for i in range(n))}concat=n={n}:v=1:a=0,{held}{tag}," + full_header(fr["bands"]["title"], t) + "[mid]"
-        else:
-          story = (f"{windows};{''.join(f'[w{i}]' for i in range(n))}concat=n={n}:v=1:a=0,{held}pad={W}:{H}:0:{TOP}:color=0x0B0D26,{tag},"
+        story = (f"{windows};{''.join(f'[w{i}]' for i in range(n))}concat=n={n}:v=1:a=0,{held}pad={W}:{H}:0:{TOP}:color=0x0B0D26,{tag},"
                  f"drawbox=x=0:y=0:w=iw:h={TOP}:color=0x101239@1:t=fill,"
                  f"drawtext=fontfile='{FONT}':textfile='{t / 'series.txt'}':fontsize={g['series']}:fontcolor=0xF2BE50:x=(w-text_w)/2:y={int(TOP * 0.22)},"
                  f"drawtext=fontfile='{FONT}':textfile='{t / 'title.txt'}':fontsize={g['title']}:fontcolor=white:x=(w-text_w)/2:y={int(TOP * 0.52)},"

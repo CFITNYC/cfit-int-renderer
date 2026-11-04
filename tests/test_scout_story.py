@@ -46,10 +46,7 @@ print("Scout story + source check: PASS")
 # ---- layout v2 (2026-10-27): footage window + caption area, nothing drawn on the footage ----
 import tempfile, pathlib
 assert ss.V2_TOP + ss.V2_WIN + ss.V2_ZONE + ss.V2_BAR == 1280 and ss.V2_WIN == 804 and ss.V2_ZONE_Y == 954
-tag = "fps=30"
-wide, tall = ss.window_filter(1, 1920, 1080, "w0", tag), ss.window_filter(1, 540, 960, "w0", tag)
-assert "crop=720:804" in wide and "gblur" not in wide                          # wide: fill the window
-assert "force_original_aspect_ratio=decrease" in tall and "gblur" in tall       # tall: whole clip shown, blurred sides
+assert not hasattr(ss, "window_filter")                                        # 2026-11-04: the old v2 window is gone
 assert ss.check_words([], 10) == []
 assert ss.check_words([{"start": 0.2, "end": 0.5, "text": "Watch"}], 10) == [(0.2, 0.5, "Watch")]
 for bad, words in [([{"start": 9.5, "end": 11, "text": "late"}], "outside the story"), ([{"start": 0, "end": 0.1, "text": "x"}] * 141, "at most 140")]:
@@ -68,10 +65,14 @@ with tempfile.TemporaryDirectory() as td:
     assert a.count("Dialogue:") == 4 and "Grounded" not in a                    # with a voice: words only, no hook/payoff
     assert "{\\c" + ss.GOLD_ASS + "}Watch{\\c&H00FFFFFF&} the base" in a          # the word being spoken is gold
     assert "0:00:01.00,0:00:01.80" in a                                          # "base" holds through the short pause until "first."
-calls = []
-ss.render_story_v2 = lambda job, get=None: calls.append(job["layout"]) or b"v2"
-assert ss.render_story({**story, "layout": "v2"}) == b"v2" and calls == ["v2"]
-print("Scout layout v2: PASS")
+# 2026-11-04 (Nick's standing rule): only the banded layout v3; v2, full-screen and no layout are refused
+assert not hasattr(ss, "render_story_v2")
+for lay in ("v2", "full", None, "", "v1"):
+    try:
+        ss.render_story({**story, "layout": lay} if lay is not None else {k: v for k, v in story.items() if k != "layout"}); raise AssertionError(f"layout {lay!r} accepted")
+    except ValueError as e:
+        assert str(e) == ss.BANDED_ONLY, e
+print("Scout layout v2 retired: PASS")
 
 # ---- layout v3 (Stage 3): versions, 4:5 frame, fast cuts, voice + music ----
 for fr in ("9:16", "4:5"):
@@ -215,8 +216,8 @@ for WIN in (804, 550):
     y0, y1 = (rows[0] - ss.BODY_HEAD_MARGIN) * vh, min(1, rows[1] + ss.BODY_FEET_MARGIN) * vh
     assert cx <= x0 + 1 and cx + dw >= x1 - 1 and cy <= y0 + 1 and cy + dh >= y1 - 1
     assert dh > round(720 * 1080 / 1920)                     # larger than simply fitting the whole wide picture
-# a still clip (movement unclear): the whole picture with blurred edges, never a guess
-assert "if f is None:" in src and "fits[url] = body_fit(rows, movement_cols(path, spans), sw0, sh0, W, WIN) if rows else None" in src
+# a still clip (movement unclear): refused, never a blurred "whole picture" fallback (2026-11-04)
+assert "if not rows:" in src and "can't be framed in the banded layout" in src and "if f is None:" not in src
 # the free video check also reports the clip's size (so Scout can prefer upright clips)
 stub = {"duration": lambda p: 10.0, "gray_frames": lambda *a, **k: [], "best_match": lambda a, b: 0.0, "hard_cuts": lambda p, d: [],
         "motion_profile": lambda p, d: ([1.0], [0.5]), "video_size": lambda p: (1080, 1920)}
