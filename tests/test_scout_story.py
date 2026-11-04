@@ -91,9 +91,9 @@ v3 = {"mode": "scout_story_short", "publishing_enabled": False, "version": "shor
 version, segs3, ncuts, g3 = ss.check_story_v3(v3)                      # 4 + 3 cuts of 1.6 + 4 = 12.8 s seen: allowed
 assert version == "short" and ncuts == 3
 try:
-    ss.check_story_v3({**v3, "segments": [seg("setup", 0, 4), seg("challenge", 2.5, 9.5), seg("win", 8, 13)]}); raise AssertionError("13.8 s short accepted")
+    ss.check_story_v3({**v3, "segments": [seg("setup", 0, 8), seg("challenge", 0, 15), seg("challenge", 20, 35), seg("win", 40, 50)], "challenge_cuts": 1}); raise AssertionError("48 s short accepted")
 except ValueError as e:
-    assert "Story is 13.8 s; the most is 13" in str(e)                  # the limit counts the length after the fast cuts
+    assert "Story is 48.0 s; the most is 30" in str(e)                  # the limit counts the length after the fast cuts
 for bad, words in [({**v3, "version": "medium"}, "short or long"), ({**v3, "publishing_enabled": True}, "Private Scout story"),
                    ({**v3, "challenge_cuts": 6}, "1-4"), ({**v3, "frame": "16:9"}, "9:16 or 4:5")]:
     try:
@@ -103,9 +103,9 @@ for bad, words in [({**v3, "version": "medium"}, "short or long"), ({**v3, "publ
 long_job = {**v3, "version": "long", "frame": "4:5", "challenge_cuts": 1, "segments": [seg("setup", 0, 4), seg("challenge", 5, 23), seg("win", 24, 31)]}
 assert ss.check_story_v3(long_job)[0] == "long"
 try:
-    ss.check_story_v3({**long_job, "segments": [seg("setup", 0, 4), seg("challenge", 5, 25), seg("win", 26, 35)]}); raise AssertionError("long over 32 s accepted")
+    ss.check_story_v3({**long_job, "segments": [seg("setup", 0, 10), seg("challenge", 5, 30), seg("challenge", 30, 55), seg("win", 56, 71)]}); raise AssertionError("long over 45 s accepted")
 except ValueError as e:
-    assert "the most is 32" in str(e)
+    assert "the most is 45" in str(e)
 au = "https://hszormivkbqvpfgfhktm.supabase.co/storage/v1/object/sign/cfit-int-private-audio/u/private-soundtracks/a.mp3?t"
 for url, audio, words in [(au, False, "Invalid video source"), (au.replace(".mp3", ".exe"), True, "Invalid audio source"),
                           (au.replace("cfit-int-private-audio", "cfit-billing"), True, "Invalid audio source")]:

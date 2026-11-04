@@ -299,9 +299,16 @@ def tagline_lines(text):
         raise ValueError("End tagline is too long for two lines")
     return best[1]
 VERSION_LIMITS = {
-    "short": ({"setup": (1.0, 4.0), "challenge": (2.0, 7.0), "win": (1.5, 5.0)}, 13.0),
-    "long":  ({"setup": (2.0, 6.0), "challenge": (8.0, 20.0), "win": (4.0, 9.0)}, 32.0),
+    "short": ({"setup": (1.0, 8.0), "challenge": (2.0, 15.0), "win": (1.5, 10.0)}, 30.0),   # 2026-11-04: longer stories (were 13 s and 32 s)
+    "long":  ({"setup": (2.0, 10.0), "challenge": (3.0, 25.0), "win": (4.0, 15.0)}, 45.0),
 }
+MIN_PARTS, MAX_PARTS = 2, 5
+
+def parts_ok(segs):
+    """2-5 parts in order: the setup first, the win last, challenges between (a part may be its own clip)."""
+    if not isinstance(segs, list) or not MIN_PARTS <= len(segs) <= MAX_PARTS:
+        return False
+    return [s.get("role") for s in segs] == ["setup"] + ["challenge"] * (len(segs) - 2) + ["win"]
 CUT_SECONDS = 1.6
 
 def frame_geometry(frame):
@@ -341,8 +348,8 @@ def check_story_v3(job):
     if b.get("opening_role") != "opening" or b.get("closing_role") != "closing":
         raise ValueError("Opening and closing roles required")
     segs = job.get("segments")
-    if not isinstance(segs, list) or [s.get("role") for s in segs] != list(ROLES):
-        raise ValueError("Story needs exactly setup, challenge, win, in that order")
+    if not parts_ok(segs):
+        raise ValueError(f"Story needs {MIN_PARTS}-{MAX_PARTS} parts: setup first, win last, challenges between")
     limits, most = VERSION_LIMITS[version]
     cuts = int(job.get("challenge_cuts", 1))
     if not 1 <= cuts <= 4:
@@ -584,7 +591,7 @@ def render_story_v3(job, get=fetch):
         fits = banded_fits(srcs, pieces, g)   # refuses before anything is made if a clip can't be framed
         story_len = sum(z - a for _, a, z in pieces) + hold     # the held last frame is part of the story
         setup_end = float(segs[0]["end"]) - float(segs[0]["start"])
-        win_start = story_len - hold - (float(segs[2]["end"]) - float(segs[2]["start"]))   # the hold comes after the win footage
+        win_start = story_len - hold - (float(segs[-1]["end"]) - float(segs[-1]["start"]))   # the hold comes after the win footage
         opening_len, closing_len = duration(first), duration(last)
         video_len = opening_len + story_len + closing_len
         words = []
