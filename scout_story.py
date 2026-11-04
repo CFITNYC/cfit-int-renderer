@@ -130,8 +130,22 @@ MAX_WORDS = 140
 
 def video_size(path):
     err = subprocess.run([FFMPEG, "-hide_banner", "-i", str(path)], capture_output=True, text=True).stderr
+    return size_from_probe(err)
+
+def size_from_probe(err):
+    """The picture size as players (and ffmpeg's own frame reading) show it: an iPhone portrait clip is stored sideways
+    with a 90° rotation note, so width and height are swapped for 90°/270° (2026-11-04: was read as landscape)."""
     m = re.search(r"Video:.*?(\d{2,5})x(\d{2,5})", err)
-    return (int(m[1]), int(m[2])) if m else (720, 1280)
+    if not m:
+        return (720, 1280)
+    w, h = int(m[1]), int(m[2])
+    rest = err[m.end():]
+    nxt = re.search(r"\n\s*Stream #", rest)              # only the rotation note of this same video stream
+    rest = rest[:nxt.start()] if nxt else rest
+    r = re.search(r"rotation of (-?\d+(?:\.\d+)?) degrees", rest) or re.search(r"\brotate\s*:\s*(-?\d+(?:\.\d+)?)", rest)
+    if r and round(abs(float(r[1]))) % 180 == 90:
+        w, h = h, w
+    return (w, h)
 
 def window_filter(idx, src_w, src_h, label, tag):
     """Wide clips fill the window (centre crop). Tall clips are shown whole, with a soft blurred copy behind."""
