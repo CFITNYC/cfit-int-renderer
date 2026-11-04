@@ -15,7 +15,8 @@ MAX_SECONDS = 180          # longest library video that can be measured
 MAX_CROP_SECONDS = 120     # longest part that can be previewed or saved
 MEASURE_W, MEASURE_H, MEASURE_FPS = 96, 54, 4
 LEVEL = 0.1                # movement counts at 10% of the clip's strongest movement
-AI_FRAMES_MAX = 8
+AI_FRAMES_MAX = 10         # (was 8) Intake drafting asks for 10 (Nov 4 2026)
+AI_FRAME_WIDTHS = (384, 768)   # still-frame width: 384 (default, as before) or 768 (Intake drafting)
 
 def _private(job, mode):
     if job.get("mode") != mode or job.get("publishing_enabled") is not False:
@@ -68,12 +69,22 @@ def movement_by_second(frames, fps=MEASURE_FPS, w=MEASURE_W, h=MEASURE_H):
         out.append([round(min(x[0] for x in near), 4), round(max(x[1] for x in near), 4)] if near and raw[s] else None)
     return out
 
-def _thumbs(path, dur, count):
+def moving_span(seconds, dur):
+    """(start, end) in seconds from the first to the last second where something clearly moves; the whole clip when
+    under 2 such seconds or under 1 second apart. Leaves out still setup and rest at the start and the end."""
+    moving = [s for s, v in enumerate(seconds or []) if v]
+    if len(moving) < 2:
+        return 0.0, float(dur)
+    a, b = float(moving[0]), min(float(moving[-1] + 1), float(dur))
+    return (a, b) if b - a >= 1.0 else (0.0, float(dur))
+
+def _thumbs(path, dur, count, start=0.0, end=None, width=384):
+    end = float(dur) if end is None else end
     out = []
     for k in range(count):
-        t = dur * (k + 0.5) / count
+        t = start + (end - start) * (k + 0.5) / count
         jpg = subprocess.run([ss.FFMPEG, "-nostdin", "-v", "error", "-ss", f"{t:.2f}", "-i", str(path), "-frames:v", "1",
-                              "-vf", "scale=384:-2", "-q:v", "6", "-f", "image2", "-c:v", "mjpeg", "pipe:1"], capture_output=True, timeout=30).stdout
+                              "-vf", f"scale={width}:-2", "-q:v", "6" if width <= 384 else "3", "-f", "image2", "-c:v", "mjpeg", "pipe:1"], capture_output=True, timeout=30).stdout
         if jpg:
             out.append({"t": round(t, 2), "jpeg_base64": base64.b64encode(jpg).decode()})
     return out
@@ -89,9 +100,13 @@ def reframe_measure(job, get=None):
         w, h = ss.video_size(src)
         seconds = movement_by_second(_gray(src, dur))
         frames = min(int(job.get("ai_frames") or 0), AI_FRAMES_MAX)
+        width = int(job.get("ai_frame_width") or 384)
+        if width not in AI_FRAME_WIDTHS:
+            raise ValueError("ai_frame_width must be 384 or 768")
+        start, end = moving_span(seconds, dur) if job.get("ai_frames_from") == "movement" else (0.0, float(dur))
         return {"status": "REFRAME_MEASURED", "publishing_enabled": False, "width": w, "height": h, "duration": round(dur, 2),
                 "box": box_width(w, h), "box_frac": round(box_width(w, h) / w, 4), "seconds": seconds,
-                **({"frames": _thumbs(src, dur, frames)} if frames > 0 else {})}
+                **({"frames": _thumbs(src, dur, frames, start, end, width), "frames_span": [round(start, 2), round(end, 2)]} if frames > 0 else {})}
 
 def crop_x_expr(path, start, w, box):
     """ffmpeg crop x for the box path [[t, centre], ...] (source seconds, centre as a fraction of the width), straight lines
