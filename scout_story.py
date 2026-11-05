@@ -611,7 +611,7 @@ def render_story_v3(job, get=fetch):
                         setup_end, win_start, story_len, video_len, tagline, opening_len + story_len - TAG_SECONDS,
                         tag_top if tagline else None, tag_bottom if tagline else None, cap=None)
         W, H, WIN, TOP, BAR, ZONE_Y = g["W"], g["H"], g["WIN"], g["TOP"], g["BAR"], g["ZONE_Y"]
-        args = [FFMPEG, "-nostdin", "-hide_banner", "-v", "error", "-y", "-threads", "1", "-i", str(first)]   # one decoder thread per clip: many clips stay within memory
+        args = [FFMPEG, "-nostdin", "-hide_banner", "-v", "error", "-y", "-filter_complex_threads", "2", "-threads", "1", "-i", str(first)]   # one decoder thread per clip: many clips stay within memory
         for s, a, z in pieces:
             args += ["-threads", "1", "-ss", f"{a:.3f}", "-t", f"{z - a:.3f}", "-i", str(srcs[s["signed_url"]])]
         n = len(pieces)
