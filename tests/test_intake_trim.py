@@ -32,6 +32,7 @@ refused(it.check_job, {**job, "start": -1, "end": 5}, "Choose a part")
 assert it.check_job({**job, "start": 1, "end": 3}) == (1.0, 3.0) and it.check_job({**job, "start": 0, "end": 120}) == (0.0, 120.0)
 a = it.cut_args("s", "o", 1.5, 10)
 assert a[a.index("-ss") + 1] == "1.500" and a.index("-ss") < a.index("-i") and a[a.index("-crf") + 1] == "20"
+assert a[a.index("-fps_mode") + 1] == "vfr"                                 # never duplicates frames
 assert "copy" not in a and "-an" not in a and "-vf" not in a                # exact cut, sound kept, no colour change
 s = open("intake_trim.py").read()
 assert "unlink" not in s and "remove(" not in s and "DELETE" not in s       # this module never deletes anything

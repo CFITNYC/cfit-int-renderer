@@ -48,9 +48,10 @@ def download(url, dest):
 
 def cut_args(src, out, start, seconds):
     """Exact to the frame: seek first, then encode only the part kept, so the time depends on the part, not the whole video.
-    ffmpeg turns iPhone clips upright by itself; no colour filter, so the source's colour tags (HDR included) carry over."""
+    ffmpeg turns iPhone clips upright by itself; no colour filter, so the source's colour tags (HDR included) carry over.
+    fps_mode vfr keeps the source's own frames: without it Railway's ffmpeg copied 30 fps iPhone clips up to 120 fps."""
     return [ss.FFMPEG, "-nostdin", "-hide_banner", "-v", "error", "-y", "-ss", f"{start:.3f}", "-t", f"{seconds:.3f}", "-i", str(src),
-            "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "veryfast", "-crf", CRF, "-pix_fmt", "yuv420p",
+            "-map", "0:v:0", "-map", "0:a:0?", "-fps_mode", "vfr", "-c:v", "libx264", "-preset", "veryfast", "-crf", CRF, "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "128k", "-map_metadata", "-1", "-movflags", "+faststart", str(out)]
 
 def upload(url, path):
