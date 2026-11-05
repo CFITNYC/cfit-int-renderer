@@ -611,11 +611,11 @@ def render_story_v3(job, get=fetch):
                         setup_end, win_start, story_len, video_len, tagline, opening_len + story_len - TAG_SECONDS,
                         tag_top if tagline else None, tag_bottom if tagline else None, cap=None)
         W, H, WIN, TOP, BAR, ZONE_Y = g["W"], g["H"], g["WIN"], g["TOP"], g["BAR"], g["ZONE_Y"]
-        args = [FFMPEG, "-nostdin", "-hide_banner", "-v", "error", "-y", "-i", str(first)]
+        args = [FFMPEG, "-nostdin", "-hide_banner", "-v", "error", "-y", "-threads", "1", "-i", str(first)]   # one decoder thread per clip: many clips stay within memory
         for s, a, z in pieces:
-            args += ["-ss", f"{a:.3f}", "-t", f"{z - a:.3f}", "-i", str(srcs[s["signed_url"]])]
+            args += ["-threads", "1", "-ss", f"{a:.3f}", "-t", f"{z - a:.3f}", "-i", str(srcs[s["signed_url"]])]
         n = len(pieces)
-        args += ["-i", str(last)]
+        args += ["-threads", "1", "-i", str(last)]
         colour = "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv"
         tag = f"{colour},setsar=1,fps={FPS},format=yuv420p"
         fit = f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=0x0B0D26,{tag}"
@@ -636,7 +636,9 @@ def render_story_v3(job, get=fetch):
         graph = f"[0:v]{fit}[a];{story};[{n + 1}:v]{fit}[c];[a][mid][c]concat=n=3:v=1:a=0,subtitles='{t / 'captions.ass'}'[v]"
         args += ["-filter_complex", graph, "-map", "[v]", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
                  "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv", "-movflags", "+faststart", str(silent)]
-        subprocess.run(args, check=True, timeout=180, capture_output=True)
+        made = subprocess.run(args, timeout=240, capture_output=True)
+        if made.returncode != 0:          # say why instead of a blank failure (a negative code means the system stopped it, usually out of memory)
+            raise ValueError(f"The video maker stopped (code {made.returncode}, {n} pieces): {made.stderr[-160:].decode(errors='replace')}")
         vlen = duration(silent)
         # sound: Nick voice at its offset, music low under it (dipping while he speaks), levelled for social media
         voice, music = t / "voice", t / "music"
