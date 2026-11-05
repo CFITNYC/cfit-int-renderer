@@ -302,10 +302,10 @@ VERSION_LIMITS = {
     "short": ({"setup": (1.0, 8.0), "challenge": (2.0, 15.0), "win": (1.5, 10.0)}, 30.0),   # 2026-11-04: longer stories (were 13 s and 32 s)
     "long":  ({"setup": (2.0, 10.0), "challenge": (3.0, 25.0), "win": (4.0, 15.0)}, 45.0),
 }
-MIN_PARTS, MAX_PARTS = 2, 8
+MIN_PARTS, MAX_PARTS = 2, 12
 
 def parts_ok(segs):
-    """2-8 parts in order: the setup first, the win last, challenges between (a part may be its own clip)."""
+    """2-12 parts in order: the setup first, the win last, challenges between (a part may be its own clip)."""
     if not isinstance(segs, list) or not MIN_PARTS <= len(segs) <= MAX_PARTS:
         return False
     return [s.get("role") for s in segs] == ["setup"] + ["challenge"] * (len(segs) - 2) + ["win"]

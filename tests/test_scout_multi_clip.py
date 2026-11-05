@@ -1,4 +1,4 @@
-"""Longer stories from 2-8 parts (2026-11-04): checks before anything is made. No network, no ffmpeg."""
+"""Longer stories from 2-12 parts (2026-11-04): checks before anything is made. No network, no ffmpeg."""
 import scout_story as ss
 u = "https://hszormivkbqvpfgfhktm.supabase.co/storage/v1/object/sign/cfit-exercise-videos/exercises/a.mp4?token=t"
 seg = lambda role, a, z, url=u: {"role": role, "signed_url": url, "start": a, "end": z}
@@ -21,9 +21,9 @@ assert len(ok(segments=four)[1]) == 4
 five = [seg("setup", 0, 4), seg("challenge", 0, 6, u + "b"), seg("challenge", 0, 6, u + "c"), seg("challenge", 0, 6, u + "d"), seg("win", 0, 6, u + "e")]
 assert len(ok(segments=five)[1]) == 5
 # 1 or 6 parts, wrong order
-refused("2-8 parts", segments=[seg("setup", 0, 4)])
-refused("2-8 parts", segments=[seg("setup", 0, 4)] + [seg("challenge", 0, 3)] * 7 + [seg("win", 0, 3)])
-refused("2-8 parts", segments=[seg("win", 0, 3), seg("setup", 0, 3)])
+refused("2-12 parts", segments=[seg("setup", 0, 4)])
+refused("2-12 parts", segments=[seg("setup", 0, 4)] + [seg("challenge", 0, 3)] * 11 + [seg("win", 0, 3)])
+refused("2-12 parts", segments=[seg("win", 0, 3), seg("setup", 0, 3)])
 # 8 parts, the same source more than once, out of source order
 mix = [seg("setup", 9, 11, u + "a")] + [seg("challenge", a, a + 3, u + c) for a, c in ((3, "b"), (20, "a"), (5, "c"), (13, "a"), (8, "b"), (30, "a"))] + [seg("win", 2, 4, u + "c")]
 assert len(ok(segments=mix)[1]) == 8
@@ -34,4 +34,6 @@ refused("setup must be 1-8", segments=[seg("setup", 0, 9), seg("win", 0, 5)])
 lng = {"version": "long", "frame": "4:5"}
 assert ok(segments=[seg("setup", 0, 10), seg("challenge", 0, 20), seg("win", 0, 15)], **lng)
 refused("the most is 45", segments=[seg("setup", 0, 10), seg("challenge", 0, 22), seg("win", 0, 15)], **lng)
+ten = [seg("setup", 4, 8, u + "a")] + [seg("challenge", i * 5, i * 5 + 4, u + "bcdeacdb"[i]) for i in range(8)] + [seg("win", 18, 23, u + "e")]
+assert len(ok(segments=ten, version="long", frame="4:5")[1]) == 10   # 2 rounds of 5 exercises, interleaved
 print("multi clip: all checks pass")
