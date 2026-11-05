@@ -46,4 +46,10 @@ except ValueError as e:
     assert "384 or 768" in str(e)
 # no frames asked: no frames, no span (the Reframe page's measure call is unchanged)
 assert "frames" not in rf.reframe_measure(job) and "frames_span" not in rf.reframe_measure(job)
+# the AI look: dense at the start, spread to the end, at most 30 frames, no movement reading
+ts = rf.look_times(60.0)
+assert ts[:14] == [float(i) for i in range(14)] and len(ts) == 30 and ts[-1] <= 59.5 and ts == sorted(ts), ts
+assert rf.look_times(10.0) == [float(i) for i in range(10)]
+calls.clear(); out = rf.reframe_measure({**job, "ai_look": True})
+assert len(out["frames"]) == 30 and "seconds" not in out and out["duration"] == 40.0 and out["frames"][14]["t"] > 14
 print("intake frames: all checks pass")

@@ -16,6 +16,7 @@ MAX_CROP_SECONDS = 120     # longest part that can be previewed or saved
 MEASURE_W, MEASURE_H, MEASURE_FPS = 96, 54, 4
 LEVEL = 0.1                # movement counts at 10% of the clip's strongest movement
 AI_FRAMES_MAX = 10         # (was 8) Intake drafting asks for 10 (Nov 4 2026)
+AI_LOOK_MAX = 30           # the AI look at one clip: dense at the start (where the setup is), spread over the rest
 AI_FRAME_WIDTHS = (384, 768)   # still-frame width: 384 (default, as before) or 768 (Intake drafting)
 
 def _private(job, mode):
@@ -89,6 +90,25 @@ def _thumbs(path, dur, count, start=0.0, end=None, width=384):
             out.append({"t": round(t, 2), "jpeg_base64": base64.b64encode(jpg).decode()})
     return out
 
+def look_times(dur):
+    """Every second for the first 14 s, then evenly to the end, at most AI_LOOK_MAX frames, none in the last half second."""
+    end = max(0.0, float(dur) - 0.5)
+    head = [float(t) for t in range(0, 14) if t <= end]
+    left = AI_LOOK_MAX - len(head)
+    if end <= 14 or left <= 0:
+        return head
+    step = (end - 14) / left
+    return head + [round(14 + step * (k + 1), 1) for k in range(left)]
+
+def _thumbs_at(path, times, width=384):
+    out = []
+    for t in times:
+        jpg = subprocess.run([ss.FFMPEG, "-nostdin", "-v", "error", "-ss", f"{t:.2f}", "-i", str(path), "-frames:v", "1",
+                              "-vf", f"scale={width}:-2", "-q:v", "6", "-f", "image2", "-c:v", "mjpeg", "pipe:1"], capture_output=True, timeout=30).stdout
+        if jpg:
+            out.append({"t": round(t, 2), "jpeg_base64": base64.b64encode(jpg).decode()})
+    return out
+
 def reframe_measure(job, get=None):
     url = _private(job, "scout_reframe_measure")
     with tempfile.TemporaryDirectory() as td:
@@ -98,6 +118,8 @@ def reframe_measure(job, get=None):
         if not 1.0 <= dur <= MAX_SECONDS:
             raise ValueError(f"Video must be 1-{MAX_SECONDS} seconds")
         w, h = ss.video_size(src)
+        if job.get("ai_look") is True:      # frames only (no movement reading): the AI finds where the exercise starts and ends
+            return {"status": "REFRAME_MEASURED", "publishing_enabled": False, "width": w, "height": h, "duration": round(dur, 2), "frames": _thumbs_at(src, look_times(dur))}
         seconds = movement_by_second(_gray(src, dur))
         frames = min(int(job.get("ai_frames") or 0), AI_FRAMES_MAX)
         width = int(job.get("ai_frame_width") or 384)
