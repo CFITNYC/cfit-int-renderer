@@ -14,7 +14,7 @@ url = "https://hszormivkbqvpfgfhktm.supabase.co/storage/v1/object/sign/cfit-exer
 job = {"mode": "scout_framing_check", "publishing_enabled": False, "segments": [{"signed_url": url, "start": 0, "end": 2}]}
 refused(sf._private, {**job, "publishing_enabled": True}, "Private framing check required")
 refused(sf._private, {**job, "mode": "scout_story_short"}, "Private framing check required")
-refused(sf._private, {**job, "segments": []}, "1-6 clips required")
+refused(sf._private, {**job, "segments": []}, "1-12 clips required")
 refused(sf._private, {**job, "segments": [{"signed_url": url, "start": 3, "end": 2}]}, "0-30 seconds")
 refused(sf._private, {**job, "segments": [{"signed_url": url.replace("cfit-exercise-videos", "cfit-billing"), "start": 0, "end": 2}]}, "Private library")
 refused(sf._private, {**job, "layout": "full"}, "Only the banded layout is allowed")

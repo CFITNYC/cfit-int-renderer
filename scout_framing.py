@@ -22,8 +22,8 @@ def _private(job):
     if job.get("layout", "v3") != "v3":
         raise ValueError(ss.BANDED_ONLY)
     segs = job.get("segments")
-    if not isinstance(segs, list) or not 1 <= len(segs) <= 6:
-        raise ValueError("1-6 clips required")
+    if not isinstance(segs, list) or not 1 <= len(segs) <= 12:
+        raise ValueError("1-12 clips required")
     for s in segs:
         a, z = float(s.get("start", -1)), float(s.get("end", -1))
         if not (0 <= a < z <= a + 30):
