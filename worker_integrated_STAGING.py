@@ -13,6 +13,7 @@ from scout_reframe import reframe_measure, reframe_render
 from scout_framing import framing_check as scout_framing_check
 from intake_trim import intake_trim
 from library_timing import rep_timing as library_rep_timing
+from library_pose import pose_timing as library_pose_timing
 
 def private_audio_mix(job):
     """Finish a previously rendered private video; preserve existing images and branding."""
@@ -146,6 +147,8 @@ class Handler(BaseHandler):
                 return self.answer(200, reframe_measure(job))
             elif mode == "scout_framing_check":   # free: the banded framing check and 3 stills (no AI, no voice)
                 return self.answer(200, scout_framing_check(job))
+            elif mode == "library_pose_timing":   # free: seconds per rep from body points (MediaPipe on this server, no AI)
+                return self.answer(200, library_pose_timing(job))
             elif mode == "library_rep_timing":    # free: movement line, rep cycles and a few stills of one library video (no AI)
                 return self.answer(200, library_rep_timing(job))
             elif mode == "intake_trim_save":      # the shorter clip goes straight to storage; the answer is facts only
