@@ -251,7 +251,8 @@ def render_story(job, get=fetch):
 # Long version (LinkedIn, Facebook): 4:5, three calm parts, the voice starts when the story starts.
 # Captions follow the voice word by word (current word gold) in the caption area, never over the footage.
 # Music sits low under the voice and dips while the voice speaks; loudness levelled for social media.
-# Nov 12 2026: music raised so it stays audible under the voice (about 12 dB below it, was about 21 dB = silent on phones).
+# Nov 12 2026 (Nick: louder): every track is levelled first (quiet intros no longer vanish), then sits about 6-8 dB under the
+# voice with a light dip while he speaks (was about 21 dB under = silent on phones).
 FRAMES = {
     "9:16": {"W": 720, "H": 1280, "TOP": 150, "BAR": 96, "ZONE": 230, "series": 22, "title": 30, "bar": 21, "cap": 62, "line": 52, "cap_chars": 16, "tag": 46, "tagbar_top": 1140,
              "t3": {"top": 1116, "l1": 30, "l2": 28, "l3": 28, "y": (1146, 1190, 1236)}},
@@ -654,7 +655,7 @@ def render_story_v3(job, get=fetch):
         fade = f"afade=t=in:d=0.8,afade=t=out:st={max(0.0, vlen - 1.5):.2f}:d=1.5"
         if has_v and has_m:
             f = (f"[1:a]aformat=channel_layouts=stereo,{vcut}adelay={ms}|{ms},apad[vo];[vo]asplit=2[v1][vsc];"
-                 f"[2:a]aformat=channel_layouts=stereo,atrim=0:{vlen:.2f},volume=0.35,{fade}[m];[m][vsc]sidechaincompress=threshold=0.06:ratio=2.5:attack=20:release=400[md];"
+                 f"[2:a]aformat=channel_layouts=stereo,atrim=0:{vlen:.2f},loudnorm=I=-16:TP=-2:LRA=7,volume=0.32,{fade}[m];[m][vsc]sidechaincompress=threshold=0.1:ratio=1.8:attack=20:release=300[md];"
                  f"[v1][md]amix=inputs=2:normalize=0:duration=first,atrim=0:{vlen:.2f},loudnorm=I=-14:TP=-1.5:LRA=11[a]")
         elif has_v:
             f = f"[1:a]aformat=channel_layouts=stereo,{vcut}adelay={ms}|{ms},apad,atrim=0:{vlen:.2f},loudnorm=I=-14:TP=-1.5:LRA=11[a]"
