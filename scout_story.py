@@ -340,6 +340,50 @@ def story_pieces(segs, cuts):
             pieces.append((s, a, z))
     return pieces
 
+# ---- Hook clip (Nov 16 2026, Nick's rules; tested on his hip mobility videos before going live) ----
+# Right after the opening branding: a 1.5 s teaser of the most dynamic exercise in the post, mid-movement. Everything after it is
+# exactly as without a hook. Later pieces may include the hook's seconds inside a longer stretch; the exact 1.5 s never plays again
+# on its own. A job without "hook" is rendered exactly as before (this code is not reached).
+HOOK_CLIP_SECONDS, HOOK_EDGE = 1.5, 1.0     # the hook length; never the first or last second of a video (getting in / out of position)
+
+def hook_scores(motion, dur, within=None):
+    """[(start, score, samples)] for every 1.5 s window on the half-second grid, inside the video minus its first and last second.
+    motion[k] = movement between the frames at (k-1)*0.5 s and k*0.5 s (motion_profile)."""
+    out = []
+    for i in range(len(motion)):
+        a = i * 0.5
+        lo, hi = (within[0], within[1]) if within else (HOOK_EDGE, dur - HOOK_EDGE)   # inside the seconds Scout's look says the exercise is performed
+        if a < lo - 1e-6 or a + HOOK_CLIP_SECONDS > hi + 1e-6:
+            continue
+        ks = [i + 1, i + 2, i + 3]
+        if ks[-1] >= len(motion):
+            continue
+        out.append((a, round(sum(motion[k] for k in ks), 2), [motion[k] for k in ks]))
+    return out
+
+def pick_hook(srcs, pieces, profiles, within=None):
+    """profiles: {url: (motion, dur)}. Returns {signed_url, start, end, why} or None when no video is long enough."""
+    best_src, best_avg = None, -1.0
+    for url, (motion, dur) in profiles.items():                     # the most dynamic exercise: most movement in the seconds the post shows
+        ks = [k for k in range(1, len(motion)) for s, a, z in pieces if s["signed_url"] == url and a - 1e-6 <= (k - 1) * 0.5 and k * 0.5 <= z + 1e-6]
+        avg = sum(motion[k] for k in ks) / len(ks) if ks else 0.0
+        if avg > best_avg:
+            best_src, best_avg = url, avg
+    if best_src is None:
+        return None
+    motion, dur = profiles[best_src]
+    alone = [(a, z) for s, a, z in pieces if s["signed_url"] == best_src]
+    w = (within or {}).get(best_src)
+    ranked = sorted(hook_scores(motion, dur, w), key=lambda x: (-x[1], x[0]))
+    for a, score, samples in ranked:
+        z = a + HOOK_CLIP_SECONDS
+        if any(pa >= a - 0.25 and pz <= z + 0.25 for pa, pz in alone):   # a later piece would be just these seconds on their own
+            continue
+        peak = max(motion[1:]) or 1.0
+        return {"signed_url": best_src, "start": a, "end": z, "score": score, "samples": samples, "peak": round(peak, 2),
+                "avg_in_post": round(best_avg, 2)}
+    return None
+
 def check_story_v3(job):
     if job.get("mode") != "scout_story_short" or job.get("publishing_enabled") is not False:
         raise ValueError("Private Scout story required")
@@ -362,6 +406,8 @@ def check_story_v3(job):
         if not (0 <= a < z) or not (lo - 0.001 <= z - a <= hi + 0.001):
             raise ValueError(f"{s['role']} must be {lo:g}-{hi:g} seconds")
     total = sum(z - a for _, a, z in story_pieces(segs, cuts))   # the length viewers see, after the fast cuts
+    if job.get("hook_clip") is True:
+        total += HOOK_CLIP_SECONDS
     if total > most + 0.001:
         raise ValueError(f"Story is {total:.1f} s; the most is {most:g} s")
     return version, segs, cuts, frame_geometry(job.get("frame") or "9:16")
@@ -591,6 +637,17 @@ def render_story_v3(job, get=fetch):
                 srcs[s["signed_url"]] = t / f"src{len(srcs)}"; get(s["signed_url"], srcs[s["signed_url"]])
         pieces = story_pieces(segs, cuts)
         fits = banded_fits(srcs, pieces, g)   # refuses before anything is made if a clip can't be framed
+        hook = None
+        if job.get("hook_clip") is True:      # the hook clip, framed with the same fit as the rest of its video
+            given = job.get("hook_pick")      # optional: seconds picked earlier (no measuring here)
+            if isinstance(given, dict) and given.get("signed_url") in srcs:
+                hook = {"signed_url": given["signed_url"], "start": float(given["start"]), "end": float(given["start"]) + HOOK_CLIP_SECONDS}
+            else:
+                profiles = {u: (motion_profile(p, duration(p))[0], duration(p)) for u, p in srcs.items()}
+                hook = pick_hook(srcs, pieces, profiles, job.get("hook_within"))
+            if hook:
+                pieces = [({"role": "hook", "signed_url": hook["signed_url"]}, hook["start"], hook["end"])] + pieces
+                job["_hook_picked"] = hook
         story_len = sum(z - a for _, a, z in pieces) + hold     # the held last frame is part of the story
         setup_end = float(segs[0]["end"]) - float(segs[0]["start"])
         win_start = story_len - hold - (float(segs[-1]["end"]) - float(segs[-1]["start"]))   # the hold comes after the win footage

@@ -77,6 +77,16 @@ def framing_check(job, get=None):
             sw, sh = ss.video_size(p)
             sources.append({"index": i, "width": sw, "height": sh, "portrait": sh > sw})
         result = {**base, "ok": True, "sources": sources, "warnings": []}
+        if job.get("hook_clip") is True:   # 2026-11-16 (Nick): the 1.5 s hook after the branding; the same pick the render makes
+            pieces = pieces_of(segs, cuts)
+            profiles = {u: (ss.motion_profile(p, ss.duration(p))[0], ss.duration(p)) for u, p in srcs.items()}
+            h = ss.pick_hook(srcs, pieces, profiles, job.get("hook_within"))
+            if h:
+                idx = list(srcs).index(h["signed_url"])
+                result["hook"] = {"source_index": idx, "start": h["start"], "end": h["end"], "score": h["score"],
+                                  "why": f"the most movement inside the exercise ({h['score']:g}), mid-movement; never played on its own again"}
+            else:
+                result["hook"] = None
         if job.get("stills", True):
             first, mid, last = segs[0], segs[len(segs) // 2], segs[-1]
             shots = []
