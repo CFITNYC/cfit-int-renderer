@@ -131,7 +131,7 @@ class Handler(BaseHandler):
             return self.answer(401, {"error": "Not authorized"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
-            if not 1 <= size <= 16000:
+            if not 1 <= size <= 64000:   # Nov 18: an 11-clip story with its voice timings is over 16000
                 return self.answer(413, {"error": "Invalid body length"})
             job = json.loads(self.rfile.read(size))
             mode = job.get("mode")
