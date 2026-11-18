@@ -608,8 +608,16 @@ def banded_fits(srcs, pieces, g):
     Refuses (nothing made) when Scout can't tell where the person moves: there is no fallback picture. The free framing check
     uses this same function on the same seconds, so the check and the render can't disagree."""
     fits = {}
+    # 2026-11-17 (Nick): an app screen recording (Scout marks the part fit_whole: its upload note says "APP") has no person to
+    # follow, so the whole recording is shown inside the same banded window (blurred copy at the sides, navy bars, captions):
+    # never cropped, never a different layout.
+    whole = {s["signed_url"] for s, a, z in pieces if s.get("fit_whole") is True}
     for url, path in srcs.items():
         spans = [(a, z) for s, a, z in pieces if s["signed_url"] == url]
+        if url in whole:
+            sw, sh = video_size(path)
+            fits[url] = body_fit((BODY_HEAD_MARGIN, 1.0 - BODY_FEET_MARGIN), (SIDE_MARGIN, 1.0 - SIDE_MARGIN), sw, sh, g["W"], g["WIN"])
+            continue
         rows = movement_rows(path, spans)
         if not rows:
             secs = ", ".join(f"{a:.0f}-{z:.0f} s" for a, z in spans)
